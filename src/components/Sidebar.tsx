@@ -57,8 +57,8 @@ export default function Sidebar({
     <aside className="sidebar">
       <div className="sidebar__header">
         <div className="sidebar__logo">
-          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="AI Lumiere" className="sidebar__logo-img" />
-          <span>AI Lumiere</span>
+          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="SuperWizard" className="sidebar__logo-img" />
+          <span>SuperWizard</span>
         </div>
       </div>
 

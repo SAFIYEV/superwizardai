@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import { t as translate, type Lang, type TranslationKey } from '../lib/i18n'
 
-const LANG_KEY = 'ai-lumiere-lang'
+const LANG_KEY = 'superwizard-lang'
 
 interface LangContextValue {
   lang: Lang

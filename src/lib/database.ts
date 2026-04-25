@@ -1,5 +1,9 @@
 import { supabase } from './supabase'
-import type { AdminSummary, Conversation, Message, UserBot, UserBotStats } from '../types'
+import type { Conversation, FileAttachment, Message, UserBot, UserBotStats } from '../types'
+import * as local from './localStorageDb'
+
+/** Пока без Supabase: чаты и боты в localStorage (ключ superwizard-local-v1). */
+const USE_LOCAL_STORAGE = true
 
 async function retry<T>(fn: () => Promise<T>, attempts = 3, delay = 500): Promise<T> {
   for (let i = 0; i < attempts; i++) {
@@ -43,6 +47,8 @@ function mapBotRow(row: Record<string, unknown>): UserBot {
 }
 
 export async function loadConversations(userId: string): Promise<Conversation[]> {
+  if (USE_LOCAL_STORAGE) return local.loadConversations(userId)
+
   const { data: convRows, error: convError } = await supabase
     .from('conversations')
     .select('id, title, model, created_at')
@@ -61,7 +67,7 @@ export async function loadConversations(userId: string): Promise<Conversation[]>
     .order('created_at', { ascending: true })
 
   if (msgError) {
-    console.error('[AI Lumiere] Failed to load messages:', msgError)
+    console.error('[SuperWizard] Failed to load messages:', msgError)
   }
 
   const msgByConv = new Map<string, Message[]>()
@@ -92,6 +98,8 @@ export async function createConversation(
   title: string,
   model: string
 ): Promise<void> {
+  if (USE_LOCAL_STORAGE) return local.createConversation(id, userId, title, model)
+
   await retry(async () => {
     const { error } = await supabase
       .from('conversations')
@@ -101,6 +109,8 @@ export async function createConversation(
 }
 
 export async function deleteConversation(id: string): Promise<void> {
+  if (USE_LOCAL_STORAGE) return local.deleteConversation(id)
+
   const { error } = await supabase.from('conversations').delete().eq('id', id)
   if (error) throw error
 }
@@ -110,8 +120,11 @@ export async function addMessage(
   conversationId: string,
   role: string,
   content: string,
-  model?: string
+  model?: string,
+  files?: FileAttachment[]
 ): Promise<void> {
+  if (USE_LOCAL_STORAGE) return local.addMessage(id, conversationId, role, content, model, files)
+
   await retry(async () => {
     const { error } = await supabase
       .from('messages')
@@ -125,6 +138,8 @@ export async function updateMessageContent(
   content: string
 ): Promise<void> {
   if (!id) return
+  if (USE_LOCAL_STORAGE) return local.updateMessageContent(id, content)
+
   await retry(async () => {
     const { error } = await supabase
       .from('messages')
@@ -135,6 +150,8 @@ export async function updateMessageContent(
 }
 
 export async function loadBots(userId: string): Promise<UserBot[]> {
+  if (USE_LOCAL_STORAGE) return local.loadBots(userId)
+
   const { data, error } = await supabase
     .from('chat_bots')
     .select('id, user_id, name, slug, author_name, username, description, model, system_prompt, is_public, avatar_url, media_links, use_count, created_at, updated_at')
@@ -150,6 +167,8 @@ export async function createBot(
   userId: string,
   payload: Pick<UserBot, 'name' | 'description' | 'model' | 'systemPrompt' | 'authorName' | 'isPublic' | 'username' | 'avatarUrl' | 'mediaLinks'>
 ): Promise<UserBot> {
+  if (USE_LOCAL_STORAGE) return local.createBot(userId, payload)
+
   const baseSlug = slugify(payload.name) || `bot-${Math.floor(Date.now() / 1000)}`
   const slug = `${baseSlug}-${Math.random().toString(36).slice(2, 7)}`
   const { data, error } = await supabase
@@ -178,6 +197,8 @@ export async function updateBot(
   id: string,
   payload: Pick<UserBot, 'name' | 'description' | 'model' | 'systemPrompt' | 'authorName' | 'isPublic' | 'avatarUrl' | 'mediaLinks'>
 ): Promise<UserBot> {
+  if (USE_LOCAL_STORAGE) return local.updateBot(id, payload)
+
   const { data: current, error: currentErr } = await supabase
     .from('chat_bots')
     .select('username')
@@ -208,11 +229,15 @@ export async function updateBot(
 }
 
 export async function deleteBot(id: string): Promise<void> {
+  if (USE_LOCAL_STORAGE) return local.deleteBot(id)
+
   const { error } = await supabase.from('chat_bots').delete().eq('id', id)
   if (error) throw error
 }
 
 export async function loadPublicBots(limit = 100): Promise<UserBot[]> {
+  if (USE_LOCAL_STORAGE) return local.loadPublicBots(limit)
+
   const { data, error } = await supabase
     .from('chat_bots')
     .select('id, user_id, name, slug, author_name, username, description, model, system_prompt, is_public, avatar_url, media_links, use_count, created_at, updated_at')
@@ -225,6 +250,8 @@ export async function loadPublicBots(limit = 100): Promise<UserBot[]> {
 }
 
 export async function loadPublicBotBySlug(slug: string): Promise<UserBot | null> {
+  if (USE_LOCAL_STORAGE) return local.loadPublicBotBySlug(slug)
+
   const { data, error } = await supabase
     .from('chat_bots')
     .select('id, user_id, name, slug, author_name, username, description, model, system_prompt, is_public, avatar_url, media_links, use_count, created_at, updated_at')
@@ -238,39 +265,15 @@ export async function loadPublicBotBySlug(slug: string): Promise<UserBot | null>
 }
 
 export async function incrementBotUsage(id: string): Promise<void> {
+  if (USE_LOCAL_STORAGE) return local.incrementBotUsage(id)
+
   const { error } = await supabase.rpc('increment_bot_usage', { bot_id_input: id })
   if (error) throw error
 }
 
-export async function loadAdminSummary(): Promise<AdminSummary> {
-  const [totalBotsRes, publicBotsRes, convRes, msgRes, topRes] = await Promise.all([
-    supabase.from('chat_bots').select('*', { count: 'exact', head: true }),
-    supabase.from('chat_bots').select('*', { count: 'exact', head: true }).eq('is_public', true),
-    supabase.from('conversations').select('*', { count: 'exact', head: true }),
-    supabase.from('messages').select('*', { count: 'exact', head: true }),
-    supabase
-      .from('chat_bots')
-      .select('id, user_id, name, slug, author_name, username, description, model, system_prompt, is_public, avatar_url, media_links, use_count, created_at, updated_at')
-      .order('use_count', { ascending: false })
-      .limit(10),
-  ])
-
-  if (totalBotsRes.error) throw totalBotsRes.error
-  if (publicBotsRes.error) throw publicBotsRes.error
-  if (convRes.error) throw convRes.error
-  if (msgRes.error) throw msgRes.error
-  if (topRes.error) throw topRes.error
-
-  return {
-    totalBots: totalBotsRes.count || 0,
-    publicBots: publicBotsRes.count || 0,
-    totalConversations: convRes.count || 0,
-    totalMessages: msgRes.count || 0,
-    topBots: (topRes.data || []).map((row) => mapBotRow(row as unknown as Record<string, unknown>)),
-  }
-}
-
 export async function loadUserBotStats(userId: string): Promise<UserBotStats> {
+  if (USE_LOCAL_STORAGE) return local.loadUserBotStats(userId)
+
   const [botsRes, convRes] = await Promise.all([
     supabase
       .from('chat_bots')

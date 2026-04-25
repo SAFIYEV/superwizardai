@@ -1,51 +1,18 @@
 import html2canvas from 'html2canvas-pro'
 import jsPDF from 'jspdf'
-import PptxGenJS from 'pptxgenjs'
 import { marked } from 'marked'
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+} from 'docx'
 
 marked.setOptions({ breaks: true, gfm: true })
-
-function stripMarkdown(md: string): string {
-  return md
-    .replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim())
-    .replace(/#{1,6}\s+/g, '')
-    .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/\*(.+?)\*/g, '$1')
-    .replace(/`(.+?)`/g, '$1')
-    .replace(/\[(.+?)\]\(.+?\)/g, '$1')
-    .replace(/^[-*+]\s+/gm, '• ')
-    .replace(/^\d+\.\s+/gm, (m) => m)
-    .replace(/^>\s+/gm, '')
-    .replace(/---+/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
-function extractSections(md: string): { title: string; body: string }[] {
-  const lines = md.split('\n')
-  const sections: { title: string; body: string }[] = []
-  let currentTitle = ''
-  let currentBody: string[] = []
-
-  for (const line of lines) {
-    const headingMatch = line.match(/^#{1,3}\s+(.+)/)
-    if (headingMatch) {
-      if (currentTitle || currentBody.length) {
-        sections.push({ title: currentTitle, body: currentBody.join('\n').trim() })
-      }
-      currentTitle = headingMatch[1].replace(/\*\*/g, '')
-      currentBody = []
-    } else {
-      currentBody.push(line)
-    }
-  }
-  if (currentTitle || currentBody.length) {
-    sections.push({ title: currentTitle, body: currentBody.join('\n').trim() })
-  }
-
-  return sections
-}
 
 const PDF_STYLES = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -138,7 +105,204 @@ const PDF_STYLES = `
   }
   .pdf-body hr { border: none; height: 1px; background: #e0e0e0; margin: 18px 0; }
   .pdf-body a { color: #b38312; text-decoration: underline; }
+  .pdf-lawyer-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  .pdf-lawyer-col {
+    min-width: 0;
+  }
+  .pdf-lawyer-col--right {
+    border-left: 1px solid #e0e0e0;
+    padding-left: 24px;
+  }
+  .pdf-lawyer-col h2 {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #888;
+    margin: 0 0 12px;
+  }
 `
+
+/** Разделяет ответ и блок источников для режима «Экспорт для юриста». */
+export function splitLawyerColumns(markdown: string): {
+  answer: string
+  sources: string
+} {
+  const text = markdown.trim()
+  const re =
+    /\n---+\s*\n##\s*(Источники[^#\n]*|Sources[^#\n]*)\s*\n/i.exec(text) ||
+    /\n##\s*(Источники[^#\n]*|Sources[^#\n]*|Источники и метки[^#\n]*)\s*\n/i.exec(
+      text
+    )
+  if (re && re.index !== undefined) {
+    return {
+      answer: text.slice(0, re.index).trim(),
+      sources: text.slice(re.index + re[0].length).trim(),
+    }
+  }
+  return { answer: text, sources: '' }
+}
+
+function mdToPlainParagraphs(md: string): Paragraph[] {
+  const html = marked.parse(md || '—') as string
+  const div = document.createElement('div')
+  div.innerHTML = html
+  const text = (div.textContent || '').trim() || '—'
+  return text.split(/\n+/).map((line) => new Paragraph({ children: [new TextRun(line)] }))
+}
+
+export async function exportLawyerDocx(
+  answerMd: string,
+  sourcesMd: string,
+  title: string,
+  leftColTitle: string,
+  rightColTitle: string
+) {
+  const left = mdToPlainParagraphs(answerMd)
+  const right = mdToPlainParagraphs(sourcesMd || '—')
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {},
+        children: [
+          new Paragraph({
+            children: [new TextRun({ text: title, bold: true })],
+          }),
+          new Paragraph({ children: [new TextRun(' ')] }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            columnWidths: [4680, 4680],
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({
+                    width: { size: 50, type: WidthType.PERCENTAGE },
+                    children: [
+                      new Paragraph({
+                        children: [new TextRun({ text: leftColTitle, bold: true })],
+                      }),
+                      ...left,
+                    ],
+                  }),
+                  new TableCell({
+                    width: { size: 50, type: WidthType.PERCENTAGE },
+                    children: [
+                      new Paragraph({
+                        children: [new TextRun({ text: rightColTitle, bold: true })],
+                      }),
+                      ...right,
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
+  })
+
+  const blob = await Packer.toBlob(doc)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const safe = (title || 'superwizard-lawyer')
+    .replace(/[^\wА-Яа-яЁё\s-]/g, '')
+    .replace(/\s+/g, '_')
+    .slice(0, 50)
+  a.download = `${safe}.docx`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function exportLawyerPdf(
+  answerMd: string,
+  sourcesMd: string,
+  title: string | undefined,
+  leftColTitle: string,
+  rightColTitle: string,
+  headerSubtitle: string
+) {
+  const leftHtml = marked.parse(answerMd || '—') as string
+  const rightHtml = marked.parse(sourcesMd || '—') as string
+  const date = new Date().toLocaleDateString('ru-RU')
+
+  const container = document.createElement('div')
+  container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;'
+  container.innerHTML = `
+    <div id="pdf-lawyer-render" class="pdf-root">
+      <style>${PDF_STYLES}</style>
+      <div class="pdf-header">
+        <span>SuperWizard · ${title ? escapeHtml(title) : escapeHtml(headerSubtitle)}</span>
+        <span>${date}</span>
+      </div>
+      <div class="pdf-lawyer-grid">
+        <div class="pdf-lawyer-col pdf-lawyer-col--left">
+          <h2>${escapeHtml(leftColTitle)}</h2>
+          <div class="pdf-body">${leftHtml}</div>
+        </div>
+        <div class="pdf-lawyer-col pdf-lawyer-col--right">
+          <h2>${escapeHtml(rightColTitle)}</h2>
+          <div class="pdf-body">${rightHtml}</div>
+        </div>
+      </div>
+    </div>
+  `
+
+  document.body.appendChild(container)
+
+  try {
+    const el = container.querySelector('#pdf-lawyer-render') as HTMLElement
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      windowWidth: 900,
+    })
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.92)
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pdfW = pdf.internal.pageSize.getWidth()
+    const pdfH = pdf.internal.pageSize.getHeight()
+    const imgW = pdfW
+    const imgH = (canvas.height * imgW) / canvas.width
+
+    let remaining = imgH
+    let offset = 0
+
+    pdf.addImage(imgData, 'JPEG', 0, offset, imgW, imgH)
+    remaining -= pdfH
+
+    while (remaining > 0) {
+      offset -= pdfH
+      pdf.addPage()
+      pdf.addImage(imgData, 'JPEG', 0, offset, imgW, imgH)
+      remaining -= pdfH
+    }
+
+    const filename = (title || 'superwizard-lawyer')
+      .replace(/[^\wА-Яа-яЁё\s-]/g, '')
+      .replace(/\s+/g, '_')
+      .slice(0, 50)
+    pdf.save(`${filename}.pdf`)
+  } finally {
+    document.body.removeChild(container)
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 export async function exportToPdf(content: string, title?: string) {
   const htmlBody = marked.parse(content) as string
@@ -150,7 +314,7 @@ export async function exportToPdf(content: string, title?: string) {
     <div id="pdf-render" class="pdf-root">
       <style>${PDF_STYLES}</style>
       <div class="pdf-header">
-        <span>AI Lumiere</span>
+        <span>SuperWizard</span>
         <span>${date}</span>
       </div>
       ${title ? `<div class="pdf-title">${title}</div>` : ''}
@@ -189,7 +353,7 @@ export async function exportToPdf(content: string, title?: string) {
       remaining -= pdfH
     }
 
-    const filename = (title || 'ai-lumiere-document')
+    const filename = (title || 'superwizard-document')
       .replace(/[^\wА-Яа-яЁё\s-]/g, '')
       .replace(/\s+/g, '_')
       .slice(0, 50)
@@ -197,107 +361,4 @@ export async function exportToPdf(content: string, title?: string) {
   } finally {
     document.body.removeChild(container)
   }
-}
-
-export async function exportToPptx(content: string, title?: string) {
-  const pptx = new PptxGenJS()
-  pptx.author = 'AI Lumiere'
-  pptx.title = title || 'Презентация'
-
-  const sections = extractSections(content)
-
-  const titleSlide = pptx.addSlide()
-  titleSlide.background = { color: '0a0a0a' }
-  titleSlide.addText(title || 'Презентация', {
-    x: 0.5, y: 1.5, w: 9, h: 1.5,
-    fontSize: 36, bold: true, color: 'D4A04A', align: 'center', fontFace: 'Arial',
-  })
-  titleSlide.addText('AI Lumiere', {
-    x: 0.5, y: 3.2, w: 9, h: 0.6,
-    fontSize: 16, color: '888888', align: 'center', fontFace: 'Arial',
-  })
-  titleSlide.addText(new Date().toLocaleDateString('ru-RU'), {
-    x: 0.5, y: 3.8, w: 9, h: 0.5,
-    fontSize: 12, color: '666666', align: 'center', fontFace: 'Arial',
-  })
-
-  const MAX_BODY_LEN = 800
-
-  for (const section of sections) {
-    if (!section.title && !section.body.trim()) continue
-
-    const slide = pptx.addSlide()
-    slide.background = { color: '0a0a0a' }
-    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.08, fill: { color: 'D4A04A' } })
-
-    if (section.title) {
-      slide.addText(section.title, {
-        x: 0.6, y: 0.35, w: 8.8, h: 0.9,
-        fontSize: 24, bold: true, color: 'ECECEC', fontFace: 'Arial',
-      })
-    }
-
-    const bodyClean = stripMarkdown(section.body)
-    if (bodyClean) {
-      const truncated = bodyClean.length > MAX_BODY_LEN
-        ? bodyClean.slice(0, MAX_BODY_LEN) + '...'
-        : bodyClean
-
-      const bullets = truncated
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => ({
-          text: l.replace(/^•\s*/, ''),
-          options: {
-            fontSize: 14,
-            color: 'C0C0C0' as const,
-            bullet: l.startsWith('•'),
-            breakLine: true as const,
-          },
-        }))
-
-      slide.addText(bullets, {
-        x: 0.6, y: section.title ? 1.4 : 0.5, w: 8.8, h: 3.8,
-        fontFace: 'Arial', valign: 'top', lineSpacingMultiple: 1.3,
-      })
-    }
-  }
-
-  if (sections.length === 0) {
-    const plain = stripMarkdown(content)
-    const chunks = splitTextIntoChunks(plain, 600)
-
-    for (const chunk of chunks) {
-      const slide = pptx.addSlide()
-      slide.background = { color: '0a0a0a' }
-      slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 0.08, fill: { color: 'D4A04A' } })
-      slide.addText(chunk, {
-        x: 0.6, y: 0.5, w: 8.8, h: 4.5,
-        fontSize: 14, color: 'C0C0C0', fontFace: 'Arial', valign: 'top', lineSpacingMultiple: 1.3,
-      })
-    }
-  }
-
-  const filename = (title || 'ai-lumiere-presentation')
-    .replace(/[^\wА-Яа-яЁё\s-]/g, '')
-    .replace(/\s+/g, '_')
-    .slice(0, 50)
-  await pptx.writeFile({ fileName: `${filename}.pptx` })
-}
-
-function splitTextIntoChunks(text: string, maxLen: number): string[] {
-  const chunks: string[] = []
-  let remaining = text
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLen) {
-      chunks.push(remaining)
-      break
-    }
-    let cut = remaining.lastIndexOf('\n', maxLen)
-    if (cut < maxLen * 0.3) cut = remaining.lastIndexOf(' ', maxLen)
-    if (cut < maxLen * 0.3) cut = maxLen
-    chunks.push(remaining.slice(0, cut).trim())
-    remaining = remaining.slice(cut).trim()
-  }
-  return chunks
 }

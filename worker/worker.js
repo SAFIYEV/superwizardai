@@ -1,13 +1,14 @@
-const GROQ_BASE = 'https://api.groq.com/openai/v1';
-
-const ALLOWED_MODELS = new Set([
-  'openai/gpt-oss-120b',
-  'openai/gpt-oss-20b',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'moonshotai/kimi-k2-instruct-0905',
-  'qwen/qwen3-32b',
-  'llama-3.1-8b-instant',
-]);
+import {
+  CHAT_MODEL_ID,
+  ALLOWED_MODELS,
+  GEMINI_API_BASE,
+  buildGeminiGenerateBody,
+  geminiResponseToOpenAIChat,
+  geminiFetchWithRetry,
+  geminiRequestHeaders,
+  openAiSseStreamFromGemini,
+  staticModelsOpenAIFormat,
+} from '../lib/geminiChat.js';
 
 const MAX_MSG_LEN = 32000;
 const MAX_MSGS = 100;
@@ -68,6 +69,11 @@ function json(data, status = 200, origin = '') {
 function validateBody(body) {
   if (!body || typeof body !== 'object') return 'Invalid body';
   if (!body.model || !ALLOWED_MODELS.has(body.model)) return 'Unknown model';
+  if (
+    body.use_google_search !== undefined &&
+    typeof body.use_google_search !== 'boolean'
+  )
+    return 'Invalid use_google_search';
   if (!Array.isArray(body.messages) || !body.messages.length) return 'No messages';
   if (body.messages.length > MAX_MSGS) return 'Too many messages';
   for (const m of body.messages) {
@@ -94,6 +100,7 @@ function validateBody(body) {
 function sanitize(body) {
   return {
     model: body.model,
+    use_google_search: Boolean(body.use_google_search),
     messages: body.messages.map((m) => {
       if (Array.isArray(m.content)) {
         return {
@@ -109,28 +116,6 @@ function sanitize(body) {
     temperature: Math.min(Math.max(Number(body.temperature) || 0.7, 0), 2),
     max_tokens: Math.min(Number(body.max_tokens) || 4096, 16384),
   };
-}
-
-async function groqFetch(apiKey, endpoint, init, maxRetries = 3) {
-  for (let i = 0; i <= maxRetries; i++) {
-    const res = await fetch(`${GROQ_BASE}${endpoint}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...(init.headers || {}),
-      },
-    });
-    if (res.ok) return res;
-    if (res.status === 429 && i < maxRetries) {
-      const ra = res.headers.get('retry-after');
-      const wait = ra ? parseInt(ra, 10) * 1000 : Math.min(1000 * 2 ** i + Math.random() * 500, 16000);
-      await new Promise((r) => setTimeout(r, wait));
-      continue;
-    }
-    return res;
-  }
-  return json({ error: { message: 'Rate limit exceeded' } }, 429);
 }
 
 export default {
@@ -150,28 +135,32 @@ export default {
       return json({ error: { message: 'Origin not allowed' } }, 403, '');
     }
 
-    const apiKey = env.GROQ_API_KEY;
+    const apiKey = (env.OPENROUTER_API_KEY ?? env.GEMINI_API_KEY ?? '').trim();
     if (!apiKey) {
       return json({ error: { message: 'Server misconfigured' } }, 500, origin);
     }
 
-    // POST /api/chat/stream
     if (url.pathname === '/api/chat/stream' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
       const err = validateBody(body);
       if (err) return json({ error: { message: err } }, 400, origin);
 
-      const groqRes = await groqFetch(apiKey, '/chat/completions', {
+      const genBody = buildGeminiGenerateBody(sanitize(body));
+      genBody.stream = true;
+      const streamUrl = `${GEMINI_API_BASE}/chat/completions`;
+      const geminiRes = await geminiFetchWithRetry(streamUrl, {
         method: 'POST',
-        body: JSON.stringify({ ...sanitize(body), stream: true }),
+        headers: geminiRequestHeaders(apiKey),
+        body: JSON.stringify(genBody),
       });
 
-      if (!groqRes.ok) {
-        const d = await groqRes.json();
-        return json(d, groqRes.status, origin);
+      if (!geminiRes.ok) {
+        const d = await geminiRes.json();
+        const msg = d?.error?.message || 'Gemini stream failed';
+        return json({ error: { message: msg } }, geminiRes.status, origin);
       }
 
-      return new Response(groqRes.body, {
+      return new Response(openAiSseStreamFromGemini(geminiRes.body), {
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -181,56 +170,28 @@ export default {
       });
     }
 
-    // POST /api/chat
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
       const err = validateBody(body);
       if (err) return json({ error: { message: err } }, 400, origin);
 
-      const groqRes = await groqFetch(apiKey, '/chat/completions', {
+      const genBody = buildGeminiGenerateBody(sanitize(body));
+      const urlGen = `${GEMINI_API_BASE}/chat/completions`;
+      const geminiRes = await geminiFetchWithRetry(urlGen, {
         method: 'POST',
-        body: JSON.stringify(sanitize(body)),
+        headers: geminiRequestHeaders(apiKey),
+        body: JSON.stringify(genBody),
       });
-      const d = await groqRes.json();
-      return json(d, groqRes.status, origin);
+      const d = await geminiRes.json();
+      if (!geminiRes.ok) {
+        const msg = d?.error?.message || 'Gemini request failed';
+        return json({ error: { message: msg } }, geminiRes.status, origin);
+      }
+      return json(geminiResponseToOpenAIChat(d, CHAT_MODEL_ID), 200, origin);
     }
 
-    // POST /api/audio/transcribe
-    if (url.pathname === '/api/audio/transcribe' && request.method === 'POST') {
-      const body = await request.json().catch(() => null);
-      if (!body?.audio || typeof body.audio !== 'string') {
-        return json({ error: { message: 'Audio data required' } }, 400, origin);
-      }
-
-      const binaryString = atob(body.audio);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      const mimeType = body.mimeType || 'audio/webm';
-      const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm';
-
-      const formData = new FormData();
-      formData.append('file', new Blob([bytes], { type: mimeType }), `audio.${ext}`);
-      formData.append('model', 'whisper-large-v3-turbo');
-      if (body.language) formData.append('language', body.language);
-
-      const groqRes = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: formData,
-      });
-
-      const d = await groqRes.json();
-      return json(d, groqRes.status, origin);
-    }
-
-    // GET /api/models
     if (url.pathname === '/api/models' && request.method === 'GET') {
-      const groqRes = await groqFetch(apiKey, '/models', { method: 'GET' });
-      const d = await groqRes.json();
-      return json(d, groqRes.status, origin);
+      return json(staticModelsOpenAIFormat(), 200, origin);
     }
 
     return json({ error: { message: 'Not found' } }, 404, origin);

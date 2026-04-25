@@ -1,29 +1,37 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { Conversation, Message, FileAttachment, UserBot } from './types'
-import { MODELS } from './types'
+import type { Conversation, Message, FileAttachment } from './types'
+import { DEFAULT_MODEL_ID } from './types'
 import { streamChat } from './api'
 import * as db from './lib/database'
+import { buildLegalSystemPrompt, type JurisdictionId } from './lib/jurisdictions'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { LangProvider, useLang } from './contexts/LangContext'
-import AuthPage from './components/AuthPage'
 import Sidebar from './components/Sidebar'
 import Chat from './components/Chat'
 import WelcomeScreen from './components/WelcomeScreen'
-import ModelSelector from './components/ModelSelector'
-import BotSelector from './components/BotSelector'
-import BotMarketplace from './components/BotMarketplace'
-import AdminPanel from './components/AdminPanel'
+import LegalToolbar from './components/LegalToolbar'
 import InputArea from './components/InputArea'
 import Settings from './components/Settings'
-import { PanelLeftClose, PanelLeft, Sparkles, Sun, Moon, Store, Shield } from 'lucide-react'
+import AuthPage from './components/AuthPage'
+import { PanelLeftClose, PanelLeft, Sparkles, Sun, Moon } from 'lucide-react'
+import { formatStreamErrorContent, getStreamError } from './lib/streamError'
 
-const MODEL_KEY = 'ai-lumiere-model'
-const THEME_KEY = 'ai-lumiere-theme'
-const BOT_KEY = 'ai-lumiere-selected-bot'
-const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || 'safievmarat65@gmail.com')
-  .split(',')
-  .map((x: string) => x.trim().toLowerCase())
-  .filter(Boolean)
+const THEME_KEY = 'superwizard-theme'
+const JURISDICTION_KEY = 'superwizard-jurisdiction'
+
+function readJurisdiction(): JurisdictionId {
+  try {
+    const v = localStorage.getItem(JURISDICTION_KEY) as JurisdictionId | null
+    if (
+      v &&
+      ['gb', 'us', 'fr', 'de', 'at', 'ru', 'kz', 'uz', 'az'].includes(v)
+    )
+      return v
+  } catch {
+    /* ignore */
+  }
+  return 'ru'
+}
 
 export default function App() {
   return (
@@ -42,7 +50,7 @@ function AppRouter() {
     return (
       <div className="loading-screen">
         <Sparkles size={36} className="loading-icon" />
-        <span>AI Lumiere</span>
+        <span>SuperWizard</span>
       </div>
     )
   }
@@ -56,14 +64,8 @@ function ChatApp() {
   const { t } = useLang()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState(
-    () => localStorage.getItem(MODEL_KEY) || 'openai/gpt-oss-120b'
-  )
-  const [bots, setBots] = useState<UserBot[]>([])
-  const [publicBots, setPublicBots] = useState<UserBot[]>([])
-  const [selectedBotId, setSelectedBotId] = useState<string | null>(
-    () => localStorage.getItem(BOT_KEY) || null
-  )
+  const [jurisdiction, setJurisdiction] = useState<JurisdictionId>(readJurisdiction)
+  const [webSearch, setWebSearch] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth > 768 : true
   )
@@ -71,8 +73,6 @@ function ChatApp() {
   const [dbLoading, setDbLoading] = useState(true)
   const [dbError, setDbError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [marketOpen, setMarketOpen] = useState(false)
-  const [adminOpen, setAdminOpen] = useState(false)
   const [theme, setTheme] = useState(
     () => localStorage.getItem(THEME_KEY) || 'dark'
   )
@@ -82,9 +82,10 @@ function ChatApp() {
   const pendingFlushRef = useRef<{ convId: string; msgId: string } | null>(null)
   const conversationsRef = useRef(conversations)
   conversationsRef.current = conversations
-  const allBots = [...bots, ...publicBots.filter((p) => !bots.some((b) => b.id === p.id))]
-  const botsRef = useRef(allBots)
-  botsRef.current = allBots
+  const jurisdictionRef = useRef(jurisdiction)
+  jurisdictionRef.current = jurisdiction
+  const webSearchRef = useRef(webSearch)
+  webSearchRef.current = webSearch
 
   const flushStreamContent = useCallback(() => {
     const pending = pendingFlushRef.current
@@ -105,15 +106,149 @@ function ChatApp() {
     )
   }, [])
 
+  const startAssistantStream = useCallback(
+    (
+      finalConvId: string,
+      assistantMsgId: string,
+      prevMessages: Message[],
+      userContent: string,
+      userFiles: FileAttachment[] | undefined,
+      model: string
+    ) => {
+      streamContentRef.current = ''
+      const systemContent = buildLegalSystemPrompt(jurisdictionRef.current)
+      const apiMessages = [
+        { role: 'system' as const, content: systemContent },
+        ...prevMessages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          files: m.files,
+        })),
+        { role: 'user' as const, content: userContent, files: userFiles },
+      ]
+
+      const ctrl = new AbortController()
+      abortRef.current = ctrl
+      pendingFlushRef.current = { convId: finalConvId, msgId: assistantMsgId }
+
+      streamChat(
+        apiMessages,
+        model,
+        (token) => {
+          streamContentRef.current += token
+          if (!flushTimerRef.current) {
+            flushTimerRef.current = setTimeout(() => {
+              flushTimerRef.current = null
+              flushStreamContent()
+            }, 40)
+          }
+        },
+        () => {
+          if (flushTimerRef.current) {
+            clearTimeout(flushTimerRef.current)
+            flushTimerRef.current = null
+          }
+          flushStreamContent()
+          pendingFlushRef.current = null
+          setIsStreaming(false)
+          db.updateMessageContent(
+            assistantMsgId,
+            streamContentRef.current
+          ).catch((err) =>
+            console.error('[SuperWizard] Update msg content failed:', err)
+          )
+        },
+        (errMsg) => {
+          if (flushTimerRef.current) {
+            clearTimeout(flushTimerRef.current)
+            flushTimerRef.current = null
+          }
+          pendingFlushRef.current = null
+          const errorContent = formatStreamErrorContent(errMsg)
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === finalConvId
+                ? {
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === assistantMsgId
+                        ? { ...m, content: errorContent }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          )
+          setIsStreaming(false)
+          db.updateMessageContent(assistantMsgId, errorContent).catch((err) =>
+            console.error('[SuperWizard] Update error content failed:', err)
+          )
+        },
+        ctrl.signal,
+        { webSearch: webSearchRef.current }
+      )
+    },
+    [flushStreamContent]
+  )
+
+  const handleRetryStream = useCallback(
+    (assistantMsgId: string) => {
+      if (isStreaming || !user) return
+      const conv = conversationsRef.current.find((c) =>
+        c.messages.some((m) => m.id === assistantMsgId)
+      )
+      if (!conv) return
+      const idx = conv.messages.findIndex((m) => m.id === assistantMsgId)
+      if (idx < 1) return
+      const userMsg = conv.messages[idx - 1]
+      if (userMsg.role !== 'user') return
+      if (!getStreamError(conv.messages[idx].content)) return
+
+      const prevMessages = conv.messages.slice(0, idx - 1)
+      const finalConvId = conv.id
+      const model = DEFAULT_MODEL_ID
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === finalConvId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantMsgId ? { ...m, content: '' } : m
+                ),
+              }
+            : c
+        )
+      )
+      db.updateMessageContent(assistantMsgId, '').catch((err) =>
+        console.error('[SuperWizard] Clear error msg failed:', err)
+      )
+
+      setIsStreaming(true)
+      streamContentRef.current = ''
+      startAssistantStream(
+        finalConvId,
+        assistantMsgId,
+        prevMessages,
+        userMsg.content,
+        userMsg.files,
+        model
+      )
+    },
+    [isStreaming, user, startAssistantStream]
+  )
+
   const activeConversation =
     conversations.find((c) => c.id === activeId) ?? null
-  const selectedBot = allBots.find((b) => b.id === selectedBotId) || null
-  const isAdmin = ADMIN_EMAILS.includes((user?.email || '').toLowerCase())
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(JURISDICTION_KEY, jurisdiction)
+  }, [jurisdiction])
 
   useEffect(() => {
     if (!user) return
@@ -124,40 +259,11 @@ function ChatApp() {
         setDbLoading(false)
       })
       .catch((err) => {
-        console.error('[AI Lumiere] DB load error:', err)
+        console.error('[SuperWizard] DB load error:', err)
         setDbError(t('app.loadError'))
         setDbLoading(false)
       })
-
-    db.loadBots(user.id)
-      .then((list) => setBots(list))
-      .catch((err) => {
-        console.error('[AI Lumiere] Bots load error:', err)
-        setBots([])
-      })
-
-    db.loadPublicBots(200)
-      .then((list) => setPublicBots(list))
-      .catch((err) => {
-        console.error('[AI Lumiere] Public bots load error:', err)
-        setPublicBots([])
-      })
-  }, [user])
-
-  useEffect(() => {
-    localStorage.setItem(MODEL_KEY, selectedModel)
-  }, [selectedModel])
-
-  useEffect(() => {
-    if (selectedBotId) localStorage.setItem(BOT_KEY, selectedBotId)
-    else localStorage.removeItem(BOT_KEY)
-  }, [selectedBotId])
-
-  useEffect(() => {
-    if (selectedBotId && !allBots.some((b) => b.id === selectedBotId)) {
-      setSelectedBotId(null)
-    }
-  }, [allBots, selectedBotId])
+  }, [user, t])
 
   const toggleTheme = useCallback(
     () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark')),
@@ -192,7 +298,7 @@ function ChatApp() {
       setConversations((prev) => prev.filter((c) => c.id !== id))
       if (activeId === id) setActiveId(null)
       db.deleteConversation(id).catch((err) =>
-        console.error('[AI Lumiere] Delete error:', err)
+        console.error('[SuperWizard] Delete error:', err)
       )
     },
     [activeId]
@@ -208,7 +314,7 @@ function ChatApp() {
     setActiveId(null)
     for (const id of ids) {
       db.deleteConversation(id).catch((err) =>
-        console.error('[AI Lumiere] Clear chat error:', err)
+        console.error('[SuperWizard] Clear chat error:', err)
       )
     }
   }, [isStreaming])
@@ -223,76 +329,17 @@ function ChatApp() {
         setDbLoading(false)
       })
       .catch((err) => {
-        console.error('[AI Lumiere] Retry load error:', err)
+        console.error('[SuperWizard] Retry load error:', err)
         setDbError(t('app.loadErrorShort'))
         setDbLoading(false)
       })
   }, [user, t])
 
-  const handleCreateBot = useCallback(
-    async (draft: Pick<UserBot, 'name' | 'description' | 'model' | 'systemPrompt' | 'authorName' | 'isPublic' | 'username' | 'avatarUrl' | 'mediaLinks'>) => {
-      if (!user) return
-      const created = await db.createBot(user.id, draft)
-      setBots((prev) => [created, ...prev])
-      setSelectedBotId(created.id)
-      if (created.isPublic) setPublicBots((prev) => [created, ...prev])
-    },
-    [user]
-  )
-
-  const handleUpdateBot = useCallback(
-    async (id: string, draft: Pick<UserBot, 'name' | 'description' | 'model' | 'systemPrompt' | 'authorName' | 'isPublic' | 'avatarUrl' | 'mediaLinks' | 'username'>) => {
-      const updated = await db.updateBot(id, draft)
-      setBots((prev) => prev.map((b) => (b.id === id ? updated : b)))
-      setPublicBots((prev) => {
-        const without = prev.filter((b) => b.id !== id)
-        return updated.isPublic ? [updated, ...without] : without
-      })
-    },
-    []
-  )
-
-  const handleDeleteBot = useCallback(
-    async (id: string) => {
-      await db.deleteBot(id)
-      setBots((prev) => prev.filter((b) => b.id !== id))
-      setPublicBots((prev) => prev.filter((b) => b.id !== id))
-      if (selectedBotId === id) setSelectedBotId(null)
-    },
-    [selectedBotId]
-  )
-
-  useEffect(() => {
-    if (!user) return
-    const botSlug = new URLSearchParams(window.location.search).get('bot')
-    if (!botSlug) return
-    db.loadPublicBotBySlug(botSlug)
-      .then((bot) => {
-        if (!bot) return
-        setPublicBots((prev) => (prev.some((b) => b.id === bot.id) ? prev : [bot, ...prev]))
-        setSelectedBotId(bot.id)
-        setActiveId(null)
-      })
-      .then(() => {
-        const cleanUrl = `${window.location.origin}${window.location.pathname}`
-        window.history.replaceState(null, '', cleanUrl)
-      })
-      .catch((err) => console.error('[AI Lumiere] Shared bot load error:', err))
-  }, [user])
-
   const handleSend = useCallback(
     async (content: string, files?: FileAttachment[]) => {
       if (isStreaming || (!content.trim() && !files?.length) || !user) return
 
-      const activeBot = selectedBotId
-        ? botsRef.current.find((b) => b.id === selectedBotId) || null
-        : null
-      const model = activeBot?.model || selectedModel
-      if (activeBot) {
-        db.incrementBotUsage(activeBot.id).catch((err) =>
-          console.error('[AI Lumiere] Bot usage increment failed:', err)
-        )
-      }
+      const model = DEFAULT_MODEL_ID
       let convId = activeId
       let prevMessages: Message[] = []
       const userMsgId = crypto.randomUUID()
@@ -332,7 +379,7 @@ function ChatApp() {
         try {
           await db.createConversation(convId, user.id, title, model)
         } catch (err) {
-          console.error('[AI Lumiere] Create conversation failed:', err)
+          console.error('[SuperWizard] Create conversation failed:', err)
         }
       } else {
         prevMessages =
@@ -346,91 +393,27 @@ function ChatApp() {
         )
       }
 
-      db.addMessage(userMsgId, convId, 'user', content).catch((err) =>
-        console.error('[AI Lumiere] Save user msg failed:', err)
+      db.addMessage(userMsgId, convId, 'user', content, undefined, files).catch((err) =>
+        console.error('[SuperWizard] Save user msg failed:', err)
       )
       db.addMessage(assistantMsgId, convId, 'assistant', '', model).catch(
-        (err) => console.error('[AI Lumiere] Save assistant msg failed:', err)
+        (err) => console.error('[SuperWizard] Save assistant msg failed:', err)
       )
 
       setIsStreaming(true)
       streamContentRef.current = ''
 
-      const apiMessages = [
-        ...(activeBot?.systemPrompt.trim()
-          ? [{ role: 'system' as const, content: activeBot.systemPrompt.trim() }]
-          : []),
-        ...prevMessages.map((m) => ({
-          role: m.role,
-          content: m.content,
-          files: m.files,
-        })),
-        { role: 'user' as const, content, files },
-      ]
-
-      const ctrl = new AbortController()
-      abortRef.current = ctrl
-
       const finalConvId = convId
-      pendingFlushRef.current = { convId: finalConvId, msgId: assistantMsgId }
-
-      await streamChat(
-        apiMessages,
-        model,
-        (token) => {
-          streamContentRef.current += token
-          if (!flushTimerRef.current) {
-            flushTimerRef.current = setTimeout(() => {
-              flushTimerRef.current = null
-              flushStreamContent()
-            }, 40)
-          }
-        },
-        () => {
-          if (flushTimerRef.current) {
-            clearTimeout(flushTimerRef.current)
-            flushTimerRef.current = null
-          }
-          flushStreamContent()
-          pendingFlushRef.current = null
-          setIsStreaming(false)
-          db.updateMessageContent(
-            assistantMsgId,
-            streamContentRef.current
-          ).catch((err) =>
-            console.error('[AI Lumiere] Update msg content failed:', err)
-          )
-        },
-        (errMsg) => {
-          if (flushTimerRef.current) {
-            clearTimeout(flushTimerRef.current)
-            flushTimerRef.current = null
-          }
-          pendingFlushRef.current = null
-          const errorContent = `⚠ ${errMsg}`
-          setConversations((prev) =>
-            prev.map((c) =>
-              c.id === finalConvId
-                ? {
-                    ...c,
-                    messages: c.messages.map((m) =>
-                      m.id === assistantMsgId
-                        ? { ...m, content: errorContent }
-                        : m
-                    ),
-                  }
-                : c
-            )
-          )
-          setIsStreaming(false)
-          db.updateMessageContent(assistantMsgId, errorContent).catch((err) =>
-            console.error('[AI Lumiere] Update error content failed:', err)
-          )
-        },
-        ctrl.signal
+      startAssistantStream(
+        finalConvId,
+        assistantMsgId,
+        prevMessages,
+        content,
+        files,
+        model
       )
     },
-    [isStreaming, selectedModel, selectedBotId, activeId, user, t]
+    [isStreaming, activeId, user, t, startAssistantStream]
   )
 
   const handleStop = useCallback(() => {
@@ -441,7 +424,7 @@ function ChatApp() {
       ?.messages.slice(-1)[0]
     if (lastMsg?.id) {
       db.updateMessageContent(lastMsg.id, streamContentRef.current).catch(
-        (err) => console.error('[AI Lumiere] Stop save failed:', err)
+        (err) => console.error('[SuperWizard] Stop save failed:', err)
       )
     }
   }, [activeId])
@@ -472,43 +455,16 @@ function ChatApp() {
               <PanelLeft size={20} />
             )}
           </button>
-          <BotSelector
-            bots={bots}
-            selectedBot={selectedBot}
-            selectedBotId={selectedBotId}
-            onSelect={setSelectedBotId}
-            onCreate={handleCreateBot}
-            onUpdate={handleUpdateBot}
-            onDelete={handleDeleteBot}
+          <LegalToolbar
+            jurisdiction={jurisdiction}
+            onJurisdictionChange={setJurisdiction}
           />
-          <button className="icon-btn" onClick={() => setMarketOpen(true)} title={t('bots.marketplace')}>
-            <Store size={18} />
-          </button>
-          {selectedBot ? (
-            <button
-              className="model-selector__trigger"
-              disabled
-              title={t('bots.modelLocked')}
-            >
-              {MODELS.find((m) => m.id === selectedBot.model)?.name || selectedBot.model}
-            </button>
-          ) : (
-            <ModelSelector
-              selected={selectedModel}
-              onChange={setSelectedModel}
-            />
-          )}
+          <span className="model-badge" title="Gemma 4 26B A4B IT (OpenRouter)">
+            Gemma 4
+          </span>
           <div className="main__header-right">
-            {isAdmin && (
-              <button
-                className="icon-btn"
-                onClick={() => setAdminOpen(true)}
-                aria-label={t('admin.title')}
-              >
-                <Shield size={18} />
-              </button>
-            )}
             <button
+              type="button"
               className="icon-btn"
               onClick={toggleTheme}
               aria-label={t('app.toggleTheme')}
@@ -534,9 +490,13 @@ function ChatApp() {
             <Chat
               conversation={activeConversation}
               isStreaming={isStreaming}
+              onRetryStream={handleRetryStream}
             />
           ) : (
-            <WelcomeScreen onSuggestionClick={handleSend} />
+            <WelcomeScreen
+              jurisdiction={jurisdiction}
+              onSuggestionClick={handleSend}
+            />
           )}
         </div>
 
@@ -545,6 +505,8 @@ function ChatApp() {
             onSend={handleSend}
             isStreaming={isStreaming}
             onStop={handleStop}
+            webSearch={webSearch}
+            onWebSearchChange={setWebSearch}
           />
         </div>
       </main>
@@ -556,20 +518,6 @@ function ChatApp() {
         onThemeChange={setTheme}
         onClearChats={handleClearChats}
       />
-
-      <BotMarketplace
-        open={marketOpen}
-        bots={publicBots}
-        onClose={() => setMarketOpen(false)}
-        onUseBot={(id) => {
-          setSelectedBotId(id)
-          setActiveId(null)
-          closeSidebarOnMobile()
-        }}
-      />
-
-      <AdminPanel open={adminOpen} onClose={() => setAdminOpen(false)} />
-
     </div>
   )
 }

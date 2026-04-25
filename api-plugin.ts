@@ -1,20 +1,17 @@
 import type { Plugin, Connect } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import dotenv from 'dotenv'
-
-dotenv.config()
-
-const GROQ_API_KEY = process.env.GROQ_API_KEY!
-const GROQ_BASE = 'https://api.groq.com/openai/v1'
-
-const ALLOWED_MODELS = new Set([
-  'openai/gpt-oss-120b',
-  'openai/gpt-oss-20b',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'moonshotai/kimi-k2-instruct-0905',
-  'qwen/qwen3-32b',
-  'llama-3.1-8b-instant',
-])
+import { loadEnv } from 'vite'
+import {
+  CHAT_MODEL_ID,
+  ALLOWED_MODELS,
+  GEMINI_API_BASE,
+  buildGeminiGenerateBody,
+  geminiResponseToOpenAIChat,
+  geminiFetchWithRetry,
+  geminiRequestHeaders,
+  pipeGeminiSseToOpenAI,
+  staticModelsOpenAIFormat,
+} from './lib/geminiChat.js'
 
 const MAX_MSG_LEN = 32000
 const MAX_MSGS = 100
@@ -22,6 +19,11 @@ const MAX_MSGS = 100
 function validateBody(body: any): string | null {
   if (!body || typeof body !== 'object') return 'Invalid body'
   if (!body.model || !ALLOWED_MODELS.has(body.model)) return 'Unknown model'
+  if (
+    body.use_google_search !== undefined &&
+    typeof body.use_google_search !== 'boolean'
+  )
+    return 'Invalid use_google_search'
   if (!Array.isArray(body.messages) || !body.messages.length) return 'No messages'
   if (body.messages.length > MAX_MSGS) return 'Too many messages'
   for (const m of body.messages) {
@@ -48,6 +50,7 @@ function validateBody(body: any): string | null {
 function sanitize(body: any) {
   return {
     model: body.model,
+    use_google_search: Boolean(body.use_google_search),
     messages: body.messages.map((m: any) => {
       if (Array.isArray(m.content)) {
         return {
@@ -65,34 +68,28 @@ function sanitize(body: any) {
   }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-async function groqFetch(endpoint: string, init: RequestInit, maxRetries = 5) {
-  for (let i = 0; i <= maxRetries; i++) {
-    const res = await fetch(`${GROQ_BASE}${endpoint}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json',
-        ...(init.headers as Record<string, string>),
-      },
-    })
-    if (res.ok) return res
-    if (res.status === 429) {
-      const ra = res.headers.get('retry-after')
-      const wait = ra ? parseInt(ra, 10) * 1000 : Math.min(1000 * 2 ** i + Math.random() * 500, 32000)
-      console.log(`[AI Lumiere] Rate limited – ${Math.round(wait)}ms (${i + 1}/${maxRetries})`)
-      await sleep(wait)
-      continue
-    }
-    return res
-  }
-  return Response.json({ error: { message: 'Rate limit exceeded' } }, { status: 429 })
-}
-
 function sendJson(res: ServerResponse, status: number, data: any) {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(data))
+}
+
+function pathnameOnly(url: string): string {
+  const q = url.indexOf('?')
+  const raw = q === -1 ? url : url.slice(0, q)
+  if (raw.length > 1 && raw.endsWith('/')) {
+    return raw.slice(0, -1)
+  }
+  return raw
+}
+
+async function geminiErrorMessage(res: Response, fallback: string): Promise<string> {
+  const text = await res.text()
+  try {
+    const d = JSON.parse(text) as { error?: { message?: string } }
+    return d?.error?.message || fallback
+  } catch {
+    return text?.trim()?.slice(0, 800) || fallback
+  }
 }
 
 const MAX_BODY_SIZE = 25 * 1024 * 1024 // 25MB for base64 images
@@ -131,34 +128,88 @@ function isLimited(ip: string, max: number, windowMs: number): boolean {
 }
 
 export function apiPlugin(): Plugin {
+  /** Заполняется в configResolved через loadEnv — не читать process.env при импорте модуля. */
+  let geminiApiKey = ''
+  let envMode = 'development'
+  let envDir = process.cwd()
+
+  const refreshGeminiApiKey = () => {
+    const fromFiles = loadEnv(envMode, envDir, '')
+      geminiApiKey = (
+        fromFiles.OPENROUTER_API_KEY ||
+        process.env.OPENROUTER_API_KEY ||
+        fromFiles.GEMINI_API_KEY ||
+        process.env.GEMINI_API_KEY ||
+        ''
+      ).trim()
+    if (geminiApiKey) {
+        process.env.OPENROUTER_API_KEY = geminiApiKey
+    }
+    return geminiApiKey
+  }
+
   return {
-    name: 'ai-lumiere-api',
+    name: 'superwizard-api',
+    configResolved(config) {
+      envMode = config.mode
+      envDir = config.envDir || process.cwd()
+      refreshGeminiApiKey()
+    },
     configureServer(server) {
+      if (!geminiApiKey) {
+        console.warn(
+          '[SuperWizard] OPENROUTER_API_KEY пустой — добавьте OPENROUTER_API_KEY в .env рядом с vite.config.ts и перезапустите npm run dev.'
+        )
+      }
+
       const handle: Connect.NextHandleFunction = async (req, res, next) => {
         const url = req.url || ''
+        const pathOnly = pathnameOnly(url)
 
-        if (!url.startsWith('/api')) return next()
+        if (!pathOnly.startsWith('/api')) return next()
+        refreshGeminiApiKey()
 
         const ip = req.socket.remoteAddress || '0'
 
-        if (url.startsWith('/api/chat') && isLimited(ip, 20, 60000)) {
+        if (pathOnly.startsWith('/api/chat') && isLimited(ip, 20, 60000)) {
           return sendJson(res as ServerResponse, 429, { error: { message: 'Слишком много запросов' } })
         }
 
-        if (url === '/api/chat/stream' && req.method === 'POST') {
+        if (pathOnly === '/api' && req.method === 'GET') {
+          return sendJson(res as ServerResponse, 200, {
+            ok: true,
+            service: 'superwizard-api',
+            endpoints: ['/api/models', '/api/chat', '/api/chat/stream'],
+          })
+        }
+
+        if (pathOnly === '/api/chat/stream' && req.method === 'POST') {
           const body = await readBody(req)
           const err = validateBody(body)
           if (err) return sendJson(res as ServerResponse, 400, { error: { message: err } })
 
+          if (!geminiApiKey) {
+            return sendJson(res as ServerResponse, 500, {
+              error: {
+                message:
+                  'Сервер: не задан OPENROUTER_API_KEY в .env (рядом с vite.config.ts). Перезапустите npm run dev.',
+              },
+            })
+          }
+
           try {
-            const groqRes = await groqFetch('/chat/completions', {
+            const genBody = buildGeminiGenerateBody(sanitize(body))
+            genBody.stream = true
+            const streamUrl = `${GEMINI_API_BASE}/chat/completions`
+            const geminiRes = await geminiFetchWithRetry(streamUrl, {
               method: 'POST',
-              body: JSON.stringify({ ...sanitize(body), stream: true }),
+              headers: geminiRequestHeaders(geminiApiKey),
+              body: JSON.stringify(genBody),
             })
 
-            if (!groqRes.ok) {
-              const d = await groqRes.json()
-              return sendJson(res as ServerResponse, groqRes.status, d)
+            if (!geminiRes.ok) {
+              const msg = await geminiErrorMessage(geminiRes, 'Gemini stream failed')
+              return sendJson(res as ServerResponse, geminiRes.status, { error: { message: msg } })
             }
 
             res.writeHead!(200, {
@@ -167,102 +218,68 @@ export function apiPlugin(): Plugin {
               Connection: 'keep-alive',
             })
 
-            const reader = groqRes.body!.getReader()
-            const dec = new TextDecoder()
-
-            const pump = async () => {
-              try {
-                while (true) {
-                  const { done, value } = await reader.read()
-                  if (done) break
-                  res.write(dec.decode(value, { stream: true }))
-                }
-              } catch (e) {
-                console.error('[AI Lumiere] Stream error:', e)
-              } finally {
-                res.end()
-              }
+            await pipeGeminiSseToOpenAI(
+              res as ServerResponse,
+              geminiRes.body as ReadableStream<Uint8Array>,
+              req as IncomingMessage
+            )
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            console.error('[SuperWizard] Stream error:', e)
+            if (!(res as ServerResponse).headersSent) {
+              sendJson(res as ServerResponse, 500, {
+                error: { message: msg || 'Internal error' },
+              })
             }
-
-            req.on('close', () => reader.cancel().catch(() => {}))
-            pump()
-          } catch (e: any) {
-            console.error('[AI Lumiere] Error:', e)
-            sendJson(res as ServerResponse, 500, { error: { message: 'Internal error' } })
           }
           return
         }
 
-        if (url === '/api/chat' && req.method === 'POST') {
+        if (pathOnly === '/api/chat' && req.method === 'POST') {
           const body = await readBody(req)
           const err = validateBody(body)
           if (err) return sendJson(res as ServerResponse, 400, { error: { message: err } })
 
-          try {
-            const groqRes = await groqFetch('/chat/completions', {
-              method: 'POST',
-              body: JSON.stringify(sanitize(body)),
+          if (!geminiApiKey) {
+            return sendJson(res as ServerResponse, 500, {
+              error: {
+                message:
+                  'Сервер: не задан OPENROUTER_API_KEY в .env (рядом с vite.config.ts). Перезапустите npm run dev.',
+              },
             })
-            const d = await groqRes.json()
-            sendJson(res as ServerResponse, groqRes.status, d)
-          } catch (e: any) {
-            sendJson(res as ServerResponse, 500, { error: { message: 'Internal error' } })
-          }
-          return
-        }
-
-        if (url === '/api/audio/transcribe' && req.method === 'POST') {
-          if (isLimited(ip, 30, 60000)) {
-            return sendJson(res as ServerResponse, 429, { error: { message: 'Слишком много запросов' } })
-          }
-
-          const body = await readBody(req)
-          if (!body?.audio || typeof body.audio !== 'string') {
-            return sendJson(res as ServerResponse, 400, { error: { message: 'Audio data required' } })
           }
 
           try {
-            const audioBuffer = Buffer.from(body.audio, 'base64')
-            const mimeType = body.mimeType || 'audio/webm'
-            const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm'
-
-            const formData = new FormData()
-            formData.append('file', new Blob([audioBuffer], { type: mimeType }), `audio.${ext}`)
-            formData.append('model', 'whisper-large-v3-turbo')
-            if (body.language) formData.append('language', body.language)
-
-            const groqRes = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
+            const genBody = buildGeminiGenerateBody(sanitize(body))
+            const urlGen = `${GEMINI_API_BASE}/chat/completions`
+            const geminiRes = await geminiFetchWithRetry(urlGen, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
-              body: formData,
+              headers: geminiRequestHeaders(geminiApiKey),
+              body: JSON.stringify(genBody),
             })
-
-            if (!groqRes.ok) {
-              const d = await groqRes.json()
-              return sendJson(res as ServerResponse, groqRes.status, d)
+            if (!geminiRes.ok) {
+              const msg = await geminiErrorMessage(geminiRes, 'Gemini request failed')
+              return sendJson(res as ServerResponse, geminiRes.status, { error: { message: msg } })
             }
-
-            const data = await groqRes.json()
-            sendJson(res as ServerResponse, 200, data)
-          } catch (e: any) {
-            console.error('[AI Lumiere] Transcribe error:', e)
-            sendJson(res as ServerResponse, 500, { error: { message: 'Transcription failed' } })
+            const d = await geminiRes.json()
+            sendJson(res as ServerResponse, 200, geminiResponseToOpenAIChat(d, CHAT_MODEL_ID))
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            sendJson(res as ServerResponse, 500, { error: { message: msg || 'Internal error' } })
           }
           return
         }
 
-        if (url === '/api/models' && req.method === 'GET') {
-          try {
-            const groqRes = await groqFetch('/models', { method: 'GET' })
-            const d = await groqRes.json()
-            sendJson(res as ServerResponse, groqRes.status, d)
-          } catch (e: any) {
-            sendJson(res as ServerResponse, 500, { error: { message: 'Internal error' } })
-          }
+        if (pathOnly === '/api/models' && req.method === 'GET') {
+          sendJson(res as ServerResponse, 200, staticModelsOpenAIFormat())
           return
         }
 
-        sendJson(res as ServerResponse, 404, { error: { message: 'Not found' } })
+        sendJson(res as ServerResponse, 404, {
+          error: {
+            message: `Not found: ${req.method || 'UNKNOWN'} ${pathOnly}`,
+          },
+        })
       }
 
       server.middlewares.use(handle)

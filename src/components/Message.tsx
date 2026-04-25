@@ -1,15 +1,19 @@
-import { useState, useMemo, memo } from 'react'
+import { useState, useMemo, memo, useCallback } from 'react'
+import type { Components } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
-import { User, Sparkles, FileDown, FileText, Image as ImageIcon } from 'lucide-react'
+import { User, Sparkles, FileDown, FileText, Image as ImageIcon, RefreshCw } from 'lucide-react'
 import type { Message as MessageType } from '../types'
 import { MODELS } from '../types'
 import { formatFileSize } from '../lib/fileProcessor'
 import { useLang } from '../contexts/LangContext'
 import ExportPreview from './ExportPreview'
+import { getStreamError } from '../lib/streamError'
+import { buildCitationIndex, type ParsedCitation } from '../lib/citationParse'
+import CitationModal from './CitationModal'
 
 function normalizeMath(text: string): string {
   text = text.replace(/\\\[\s*([\s\S]*?)\s*\\\]/g, (_m, inner) => `$$\n${inner.trim()}\n$$`)
@@ -42,8 +46,8 @@ function cleanContent(raw: string): string {
     return `\x00IM${inlineMath.length - 1}\x00`
   })
 
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '')
-  text = text.replace(/<think>[\s\S]*$/gi, '')
+  text = text.replace(/<redacted_thinking>[\s\S]*?<\/think>/gi, '')
+  text = text.replace(/<redacted_thinking>[\s\S]*$/gi, '')
   text = text.replace(/<\/?[a-z][a-z0-9]*\b[^>]*\/?>/gi, '')
 
   inlineMath.forEach((m, i) => {
@@ -63,26 +67,119 @@ function cleanContent(raw: string): string {
   return text.trim()
 }
 
+function injectConfidenceMarkdown(text: string): string {
+  return text
+    .replace(/🟢\s*Высокая/g, '[🟢 Высокая](confidence://high)')
+    .replace(/🟡\s*Средняя/g, '[🟡 Средняя](confidence://medium)')
+    .replace(/🔴\s*Низкая/g, '[🔴 Низкая](confidence://low)')
+    .replace(/🟢\s*High/g, '[🟢 High](confidence://high)')
+    .replace(/🟡\s*Medium/g, '[🟡 Medium](confidence://medium)')
+    .replace(/🔴\s*Low/g, '[🔴 Low](confidence://low)')
+    .replace(/🟢\s*Жоғары/g, '[🟢 Жоғары](confidence://high)')
+    .replace(/🟡\s*Орташа/g, '[🟡 Орташа](confidence://medium)')
+    .replace(/🔴\s*Төмен/g, '[🔴 Төмен](confidence://low)')
+}
+
 const remarkPlugins = [remarkGfm, remarkMath]
 const rehypePlugins = [rehypeKatex]
 
 interface Props {
   message: MessageType
   isStreaming: boolean
+  onRetry?: () => void
 }
 
-const MessageComponent = memo(function MessageComponent({ message, isStreaming }: Props) {
+const MessageComponent = memo(function MessageComponent({
+  message,
+  isStreaming,
+  onRetry,
+}: Props) {
   const { t } = useLang()
   const isUser = message.role === 'user'
   const modelInfo = message.model ? MODELS.find((m) => m.id === message.model) : null
   const [showExport, setShowExport] = useState(false)
+  const [activeCitation, setActiveCitation] = useState<ParsedCitation | null>(null)
 
-  const displayContent = useMemo(
-    () => (isUser ? message.content : cleanContent(message.content)),
-    [message.content, isUser]
+  const streamErr = !isUser ? getStreamError(message.content) : undefined
+
+  const { displayRaw, citations } = useMemo(() => {
+    if (isUser || streamErr) {
+      return { displayRaw: message.content, citations: [] as ParsedCitation[] }
+    }
+    return buildCitationIndex(message.content)
+  }, [message.content, isUser, streamErr])
+
+  const cleanedBase = useMemo(() => {
+    if (isUser || streamErr) return ''
+    return cleanContent(displayRaw)
+  }, [displayRaw, isUser, streamErr])
+
+  const displayContent = useMemo(() => {
+    if (isUser) return message.content
+    if (streamErr) return ''
+    return injectConfidenceMarkdown(cleanedBase)
+  }, [cleanedBase, isUser, streamErr, message.content])
+
+  const exportContent = isUser ? message.content : cleanedBase
+
+  const citationsByUrl = useMemo(() => {
+    const m = new Map<string, ParsedCitation>()
+    for (const c of citations) {
+      m.set(c.url, c)
+    }
+    return m
+  }, [citations])
+
+  const mdComponents: Components = useMemo(
+    () => ({
+      a: ({ href, children }) => {
+        const h = href || ''
+        if (h.startsWith('confidence://')) {
+          const level = h.replace('confidence://', '')
+          const titleKey =
+            level === 'high'
+              ? 'message.confidenceHigh'
+              : level === 'medium'
+                ? 'message.confidenceMedium'
+                : 'message.confidenceLow'
+          return (
+            <span className="confidence-hint" title={t(titleKey)}>
+              {children}
+            </span>
+          )
+        }
+        const childText = String(children)
+        const cit = h ? citationsByUrl.get(h) : undefined
+        const isCitationLink = childText.includes('🔗') || (Boolean(cit) && /^https?:/i.test(h))
+        if (isCitationLink && /^https?:/i.test(h)) {
+          const open = () => {
+            setActiveCitation(
+              cit ?? {
+                label: childText.replace(/\s*🔗\s*/g, ' ').trim(),
+                url: h,
+              }
+            )
+          }
+          return (
+            <button type="button" className="md-citation-link" onClick={open}>
+              {children}
+            </button>
+          )
+        }
+        return (
+          <a href={h} target="_blank" rel="noopener noreferrer">
+            {children}
+          </a>
+        )
+      },
+    }),
+    [citationsByUrl, t]
   )
 
-  const hasContent = displayContent && displayContent.length > 20
+  const hasContent =
+    Boolean(cleanedBase.trim().length > 0) && !streamErr
+
+  const closeCitation = useCallback(() => setActiveCitation(null), [])
 
   return (
     <div className={`message message--${message.role}`}>
@@ -92,7 +189,7 @@ const MessageComponent = memo(function MessageComponent({ message, isStreaming }
 
       <div className="message__body">
         <div className="message__role">
-          {isUser ? t('message.you') : 'AI Lumiere'}
+          {isUser ? t('message.you') : 'SuperWizard'}
           {modelInfo && <span className="message__model-badge">{modelInfo.name}</span>}
         </div>
 
@@ -115,14 +212,30 @@ const MessageComponent = memo(function MessageComponent({ message, isStreaming }
           </div>
         )}
 
-        <div className={`message__content ${isStreaming && displayContent ? 'streaming-cursor' : ''}`}>
+        <div className={`message__content ${isStreaming && cleanedBase ? 'streaming-cursor' : ''}`}>
           {isUser ? (
             <p>{message.content}</p>
-          ) : displayContent ? (
+          ) : streamErr ? (
+            <div className="message__error" role="alert">
+              <p className="message__error-text">{streamErr}</p>
+              {onRetry && (
+                <button type="button" className="message__retry-btn" onClick={onRetry}>
+                  <RefreshCw size={15} aria-hidden />
+                  {t('message.retry')}
+                </button>
+              )}
+            </div>
+          ) : cleanedBase || displayContent ? (
             isStreaming ? (
-              <StreamingContent content={displayContent} />
+              <StreamingContent content={cleanedBase} />
             ) : (
-              <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>{displayContent}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
+                components={mdComponents}
+              >
+                {displayContent}
+              </ReactMarkdown>
             )
           ) : isStreaming ? (
             <div className="typing-indicator">
@@ -148,10 +261,11 @@ const MessageComponent = memo(function MessageComponent({ message, isStreaming }
       </div>
 
       {showExport && (
-        <ExportPreview
-          content={displayContent}
-          onClose={() => setShowExport(false)}
-        />
+        <ExportPreview content={exportContent} onClose={() => setShowExport(false)} />
+      )}
+
+      {activeCitation && (
+        <CitationModal citation={activeCitation} onClose={closeCitation} />
       )}
     </div>
   )
@@ -183,7 +297,9 @@ function StreamingContent({ content }: { content: string }) {
     <div className="streaming-text">
       {parts.map((part, i) =>
         part.type === 'code' ? (
-          <pre key={i}><code>{part.value}</code></pre>
+          <pre key={i}>
+            <code>{part.value}</code>
+          </pre>
         ) : (
           <StreamingTextBlock key={i} text={part.value} />
         )
@@ -192,7 +308,12 @@ function StreamingContent({ content }: { content: string }) {
   )
 }
 
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
 function StreamingTextBlock({ text }: { text: string }) {
+  const { t } = useLang()
   const html = useMemo(() => {
     const mathHolders: string[] = []
     let safe = normalizeMath(text)
@@ -222,8 +343,23 @@ function StreamingTextBlock({ text }: { text: string }) {
       safe = safe.replace(`\x00MH${i}\x00`, m)
     })
 
+    const conf: [RegExp, string][] = [
+      [/🟢\s*Высокая/g, t('message.confidenceHigh')],
+      [/🟡\s*Средняя/g, t('message.confidenceMedium')],
+      [/🔴\s*Низкая/g, t('message.confidenceLow')],
+      [/🟢\s*High/g, t('message.confidenceHigh')],
+      [/🟡\s*Medium/g, t('message.confidenceMedium')],
+      [/🔴\s*Low/g, t('message.confidenceLow')],
+      [/🟢\s*Жоғары/g, t('message.confidenceHigh')],
+      [/🟡\s*Орташа/g, t('message.confidenceMedium')],
+      [/🔴\s*Төмен/g, t('message.confidenceLow')],
+    ]
+    for (const [re, title] of conf) {
+      safe = safe.replace(re, (m) => `<span class="confidence-hint" title="${escapeAttr(title)}">${m}</span>`)
+    }
+
     return safe
-  }, [text])
+  }, [text, t])
 
   return <span dangerouslySetInnerHTML={{ __html: html }} />
 }

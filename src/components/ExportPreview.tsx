@@ -1,8 +1,13 @@
 import { useState, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
-import { X, FileDown, Presentation, Eye, Pencil } from 'lucide-react'
-import { exportToPdf, exportToPptx } from '../lib/exportUtils'
+import { X, FileDown, Eye, Pencil, FileType } from 'lucide-react'
+import {
+  exportToPdf,
+  splitLawyerColumns,
+  exportLawyerPdf,
+  exportLawyerDocx,
+} from '../lib/exportUtils'
 import { useLang } from '../contexts/LangContext'
 
 interface Props {
@@ -19,7 +24,8 @@ export default function ExportPreview({ content, onClose }: Props) {
   const { t } = useLang()
   const [text, setText] = useState(content)
   const [mode, setMode] = useState<'preview' | 'edit'>('preview')
-  const [exporting, setExporting] = useState<'pdf' | 'pptx' | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [lawyerMode, setLawyerMode] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const html = useMemo(() => marked.parse(text) as string, [text])
@@ -29,18 +35,65 @@ export default function ExportPreview({ content, onClose }: Props) {
     return first?.replace(/^#+\s*/, '').replace(/\*\*/g, '').slice(0, 80) || t('export.document')
   }, [text, t])
 
-  const handleExport = async (type: 'pdf' | 'pptx') => {
-    setExporting(type)
+  const { answer: lawyerAnswer, sources: lawyerSources } = useMemo(
+    () => splitLawyerColumns(text),
+    [text]
+  )
+
+  const handleExportPdf = async () => {
+    setExporting(true)
     try {
-      if (type === 'pdf') {
-        await exportToPdf(text, title)
+      if (lawyerMode) {
+        await exportLawyerPdf(
+          lawyerAnswer,
+          lawyerSources,
+          title,
+          t('export.lawyerColAnswer'),
+          t('export.lawyerColSources'),
+          t('export.lawyerSubtitle')
+        )
       } else {
-        await exportToPptx(text, title)
+        await exportToPdf(text, title)
       }
     } catch (err) {
       console.error('Export error:', err)
     } finally {
-      setExporting(null)
+      setExporting(false)
+    }
+  }
+
+  const handleExportDocx = async () => {
+    setExporting(true)
+    try {
+      await exportLawyerDocx(
+        lawyerAnswer,
+        lawyerSources,
+        title,
+        t('export.lawyerColAnswer'),
+        t('export.lawyerColSources')
+      )
+    } catch (err) {
+      console.error('Export DOCX error:', err)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleQuickLegalReport = async () => {
+    setExporting(true)
+    try {
+      await exportLawyerPdf(
+        lawyerAnswer,
+        lawyerSources,
+        title,
+        t('export.lawyerColAnswer'),
+        t('export.lawyerColSources'),
+        t('export.lawyerSubtitle')
+      )
+    } catch (err) {
+      console.error('Quick legal export error:', err)
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -77,6 +130,20 @@ export default function ExportPreview({ content, onClose }: Props) {
           </button>
         </div>
 
+        <div className="export-modal__lawyer-row">
+          <label className="export-modal__lawyer-label">
+            <input
+              type="checkbox"
+              checked={lawyerMode}
+              onChange={(e) => setLawyerMode(e.target.checked)}
+            />
+            {t('export.lawyerMode')}
+          </label>
+          {lawyerMode && (
+            <span className="export-modal__lawyer-hint">{t('export.lawyerHint')}</span>
+          )}
+        </div>
+
         <div className="export-modal__body">
           {mode === 'edit' ? (
             <div className="export-modal__editor-wrap">
@@ -105,26 +172,36 @@ export default function ExportPreview({ content, onClose }: Props) {
           </div>
           <div className="export-modal__actions">
             <button
+              className="export-modal__btn export-modal__btn--primary"
+              onClick={handleQuickLegalReport}
+              disabled={exporting || !text.trim()}
+            >
+              <FileDown size={15} />
+              {exporting ? t('export.creating') : t('export.quickLegalReport')}
+            </button>
+            <button
               className="export-modal__btn export-modal__btn--secondary"
               onClick={onClose}
             >
               {t('export.cancel')}
             </button>
+            {lawyerMode && (
+              <button
+                className="export-modal__btn export-modal__btn--primary"
+                onClick={handleExportDocx}
+                disabled={exporting || !text.trim()}
+              >
+                <FileType size={15} />
+                {exporting ? t('export.creating') : t('export.downloadDocx')}
+              </button>
+            )}
             <button
               className="export-modal__btn export-modal__btn--primary"
-              onClick={() => handleExport('pdf')}
-              disabled={exporting !== null || !text.trim()}
+              onClick={handleExportPdf}
+              disabled={exporting || !text.trim()}
             >
               <FileDown size={15} />
-              {exporting === 'pdf' ? t('export.creating') : t('export.downloadPdf')}
-            </button>
-            <button
-              className="export-modal__btn export-modal__btn--primary"
-              onClick={() => handleExport('pptx')}
-              disabled={exporting !== null || !text.trim()}
-            >
-              <Presentation size={15} />
-              {exporting === 'pptx' ? t('export.creating') : t('export.downloadPptx')}
+              {exporting ? t('export.creating') : t('export.downloadPdf')}
             </button>
           </div>
         </div>

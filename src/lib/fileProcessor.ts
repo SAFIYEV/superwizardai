@@ -161,7 +161,7 @@ export async function processFile(
       try {
         text = await ocrPdfPages(file, onProgress)
       } catch (err) {
-        console.error('[AI Lumiere] OCR failed:', err)
+        console.error('[SuperWizard] OCR failed:', err)
       }
     }
 

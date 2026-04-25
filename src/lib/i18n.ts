@@ -24,22 +24,29 @@ const ru = {
   'sidebar.hoursAgo': 'ч. назад',
   'sidebar.daysAgo': 'дн. назад',
 
+  // Legal / SuperWizard
+  'legal.jurisdiction': 'Юрисдикция',
+  'legal.webSearch': 'Веб-анализ',
+  'legal.webSearchHint':
+    'Включить поиск в интернете для актуальных текстов законов и официальных источников (Google Search)',
+
   // Welcome
-  'welcome.subtitle': 'Платформа объединяющая лучшие ИИ модели. Выберите модель и начните диалог.',
-  'welcome.s1': 'Объясни разницу между var, let и const в JavaScript',
-  'welcome.s2': 'Напиши стихотворение о горах Кавказа',
-  'welcome.s3': 'Помоги составить бизнес-план для стартапа',
-  'welcome.s4': 'Переведи текст с русского на английский',
+  'welcome.subtitle':
+    'Юридический ИИ-агент: анализ документов, конституций и норм права выбранных стран. Не заменяет консультацию адвоката.',
 
   // Input
+  'input.uploadMenu': 'Загрузить: файл или веб-анализ',
+  'input.menuAttachFile': 'Прикрепить файл',
   'input.placeholderFiles': 'Добавьте описание или отправьте...',
-  'input.placeholder': 'Сообщение для AI Lumiere...',
+  'input.placeholder': 'Вопрос или комментарий к документу SuperWizard...',
   'input.processing': 'Обработка...',
-  'input.hint': 'AI Lumiere может допускать ошибки. Проверяйте важную информацию.',
+  'input.hint':
+    'SuperWizard может ошибаться. Проверяйте ответы по официальным источникам; для споров обратитесь к юристу.',
   'input.attach': 'Прикрепить файл',
   'input.camera': 'Сделать фото',
   'input.stop': 'Остановить',
   'input.send': 'Отправить',
+  'input.retryFile': 'Повторить',
 
   // Chat
   'chat.empty': 'Сообщения не найдены',
@@ -48,9 +55,16 @@ const ru = {
   // Message
   'message.you': 'Вы',
   'message.export': 'Экспорт',
+  'message.retry': 'Повторить',
+  'message.confidenceHigh':
+    'Несколько сходящихся источников; всё равно сверьте с официальным текстом',
+  'message.confidenceMedium':
+    'Ответ основан на косвенной практике или доктрине; рекомендуем проверить у юриста',
+  'message.confidenceLow':
+    'Предварительная оценка; обязательна проверка по официальным текстам',
 
   // Auth
-  'auth.subtitle': 'ИИ агрегатор для Закавказья, Центральной Азии и СНГ',
+  'auth.subtitle': 'Юридический ИИ-ассистент для работы с документами и нормами права',
   'auth.verifyTitle': 'Подтвердите вашу почту',
   'auth.login': 'Вход',
   'auth.register': 'Регистрация',
@@ -87,10 +101,6 @@ const ru = {
   'settings.clearChatsConfirm': 'Вы уверены? Все чаты будут удалены безвозвратно.',
   'settings.clearChatsBtn': 'Удалить все чаты',
   'settings.clearChatsDone': 'Все чаты удалены',
-  'settings.botStats': 'Статистика ваших ботов',
-  'settings.botsCount': 'Ботов',
-  'settings.usersReach': 'Пользователей',
-  'settings.promptsCount': 'Промптов',
 
   // Export
   'export.title': 'Экспорт документа',
@@ -102,8 +112,19 @@ const ru = {
   'export.cancel': 'Отмена',
   'export.creating': 'Создание...',
   'export.downloadPdf': 'Скачать PDF',
-  'export.downloadPptx': 'Скачать PPTX',
+  'export.downloadDocx': 'Скачать DOCX',
+  'export.quickLegalReport': 'Готовый юр-отчёт (2 колонки)',
   'export.document': 'Документ',
+  'export.lawyerMode': 'Экспорт для юриста (два столбца)',
+  'export.lawyerColAnswer': 'Ответ',
+  'export.lawyerColSources': 'Источники и метки',
+  'export.lawyerSubtitle': 'Экспорт для юриста',
+  'export.lawyerHint':
+    'Разделите блок командой «## Источники» или «## Источники и метки» (или после «---»).',
+
+  // Citation modal
+  'citation.openOfficial': 'Открыть на официальном портале',
+  'citation.noFullText': 'Полный текст статьи не приложен к ответу.',
 
   // App
   'app.loadError': 'Не удалось загрузить чаты. Проверьте подключение.',
@@ -150,13 +171,6 @@ const ru = {
   'bots.deleteConfirm': 'Удалить этого бота?',
   'bots.modelLocked': 'Модель задается выбранным ботом',
 
-  'admin.title': 'Админ-панель',
-  'admin.totalBots': 'Всего ботов',
-  'admin.publicBots': 'Публичных ботов',
-  'admin.totalConversations': 'Всего диалогов',
-  'admin.totalMessages': 'Всего сообщений',
-  'admin.topBots': 'Топ ботов',
-
   // Voice Chat
   'voice.title': 'Голосовой чат',
   'voice.listening': 'Слушаю...',
@@ -192,28 +206,41 @@ const en: Record<keyof typeof ru, string> = {
   'sidebar.hoursAgo': 'h ago',
   'sidebar.daysAgo': 'd ago',
 
-  'welcome.subtitle': 'A platform uniting the best AI models. Choose a model and start a conversation.',
-  'welcome.s1': 'Explain the difference between var, let, and const in JavaScript',
-  'welcome.s2': 'Write a poem about the mountains of the Caucasus',
-  'welcome.s3': 'Help me create a business plan for a startup',
-  'welcome.s4': 'Translate text from Russian to English',
+  'legal.jurisdiction': 'Jurisdiction',
+  'legal.webSearch': 'Web analysis',
+  'legal.webSearchHint':
+    'Search the web for up-to-date statutes and official sources (Google Search)',
 
+  'welcome.subtitle':
+    'Legal AI agent: document analysis and law across selected countries. Not a substitute for a lawyer.',
+
+  'input.uploadMenu': 'Upload: file or web analysis',
+  'input.menuAttachFile': 'Attach file',
   'input.placeholderFiles': 'Add a description or send...',
-  'input.placeholder': 'Message for AI Lumiere...',
+  'input.placeholder': 'Question or comment on a document (SuperWizard)...',
   'input.processing': 'Processing...',
-  'input.hint': 'AI Lumiere may make mistakes. Please verify important information.',
+  'input.hint':
+    'SuperWizard may err. Verify against official sources; for disputes consult a qualified lawyer.',
   'input.attach': 'Attach file',
   'input.camera': 'Take photo',
   'input.stop': 'Stop',
   'input.send': 'Send',
+  'input.retryFile': 'Retry',
 
   'chat.empty': 'No messages found',
   'chat.emptyHint': 'Start a conversation by sending a message below',
 
   'message.you': 'You',
   'message.export': 'Export',
+  'message.retry': 'Retry',
+  'message.confidenceHigh':
+    'Several converging sources; still verify against the official text',
+  'message.confidenceMedium':
+    'Based on indirect practice or doctrine; consider checking with a lawyer',
+  'message.confidenceLow':
+    'Preliminary assessment; verification against official sources is required',
 
-  'auth.subtitle': 'AI aggregator for the Caucasus, Central Asia & CIS',
+  'auth.subtitle': 'Legal AI assistant for documents and legal research',
   'auth.verifyTitle': 'Verify your email',
   'auth.login': 'Sign In',
   'auth.register': 'Sign Up',
@@ -249,10 +276,6 @@ const en: Record<keyof typeof ru, string> = {
   'settings.clearChatsConfirm': 'Are you sure? All chats will be permanently deleted.',
   'settings.clearChatsBtn': 'Delete all chats',
   'settings.clearChatsDone': 'All chats deleted',
-  'settings.botStats': 'Your bot statistics',
-  'settings.botsCount': 'Bots',
-  'settings.usersReach': 'Users',
-  'settings.promptsCount': 'Prompts',
 
   'export.title': 'Export Document',
   'export.preview': 'Preview',
@@ -263,8 +286,18 @@ const en: Record<keyof typeof ru, string> = {
   'export.cancel': 'Cancel',
   'export.creating': 'Creating...',
   'export.downloadPdf': 'Download PDF',
-  'export.downloadPptx': 'Download PPTX',
+  'export.downloadDocx': 'Download DOCX',
+  'export.quickLegalReport': 'Ready legal report (2 columns)',
   'export.document': 'Document',
+  'export.lawyerMode': 'Lawyer export (two columns)',
+  'export.lawyerColAnswer': 'Answer',
+  'export.lawyerColSources': 'Sources and labels',
+  'export.lawyerSubtitle': 'Lawyer export',
+  'export.lawyerHint':
+    'Add a section with «## Sources» or «## Источники» (or after a «---» line).',
+
+  'citation.openOfficial': 'Open on the official portal',
+  'citation.noFullText': 'Full article text was not included in the reply.',
 
   'app.loadError': 'Failed to load chats. Check your connection.',
   'app.loadErrorShort': 'Failed to load chats.',
@@ -309,13 +342,6 @@ const en: Record<keyof typeof ru, string> = {
   'bots.deleteConfirm': 'Delete this bot?',
   'bots.modelLocked': 'Model is controlled by selected bot',
 
-  'admin.title': 'Admin panel',
-  'admin.totalBots': 'Total bots',
-  'admin.publicBots': 'Public bots',
-  'admin.totalConversations': 'Total conversations',
-  'admin.totalMessages': 'Total messages',
-  'admin.topBots': 'Top bots',
-
   'voice.title': 'Voice Chat',
   'voice.listening': 'Listening...',
   'voice.thinking': 'Thinking...',
@@ -349,28 +375,41 @@ const kz: Record<keyof typeof ru, string> = {
   'sidebar.hoursAgo': 'сағ. бұрын',
   'sidebar.daysAgo': 'күн бұрын',
 
-  'welcome.subtitle': 'Ең үздік ЖИ модельдерін біріктіретін платформа. Модельді таңдап, диалог бастаңыз.',
-  'welcome.s1': 'JavaScript-тегі var, let және const айырмашылығын түсіндір',
-  'welcome.s2': 'Кавказ тауларын жыр ет',
-  'welcome.s3': 'Стартап үшін бизнес-жоспар жасауға көмектес',
-  'welcome.s4': 'Мәтінді орыс тілінен ағылшын тіліне аудар',
+  'legal.jurisdiction': 'Юрисдикция',
+  'legal.webSearch': 'Веб-талдау',
+  'legal.webSearchHint':
+    'Заңдардың өзекті мәтіндері мен ресми дереккөздерді интернеттен іздеу (Google Search)',
 
+  'welcome.subtitle':
+    'Заңгерлік ЖИ: құжаттар мен таңдалған елдердің нормаларын талдау. Адвокаттың орнын баспайды.',
+
+  'input.uploadMenu': 'Жүктеу: файл немесе веб-талдау',
+  'input.menuAttachFile': 'Файл тіркеу',
   'input.placeholderFiles': 'Сипаттама қосыңыз немесе жіберіңіз...',
-  'input.placeholder': 'AI Lumiere-ге хабарлама...',
+  'input.placeholder': 'SuperWizard-қа сұрақ немесе құжатқа пікір...',
   'input.processing': 'Өңдеу...',
-  'input.hint': 'AI Lumiere қате жіберуі мүмкін. Маңызды ақпаратты тексеріңіз.',
+  'input.hint':
+    'SuperWizard қателесуі мүмкін. Ресми дереккөздермен тексеріңіз; даулар үшін заңгерге жүгініңіз.',
   'input.attach': 'Файл тіркеу',
   'input.camera': 'Фото түсіру',
   'input.stop': 'Тоқтату',
   'input.send': 'Жіберу',
+  'input.retryFile': 'Қайталау',
 
   'chat.empty': 'Хабарламалар табылмады',
   'chat.emptyHint': 'Төменде хабарлама жіберіп, диалог бастаңыз',
 
   'message.you': 'Сіз',
   'message.export': 'Экспорт',
+  'message.retry': 'Қайталау',
+  'message.confidenceHigh':
+    'Бірнеше сәйкес келетін дереккөз; ресми мәтінмен салыстырыңыз',
+  'message.confidenceMedium':
+    'Жауап жанама тәжірибеге немесе доктринаға негізделген; заңгерге көрсету ұсынылады',
+  'message.confidenceLow':
+    'Алдын ала баға; ресми мәтіндермен тексеру міндетті',
 
-  'auth.subtitle': 'Кавказ, Орталық Азия және ТМД-ға арналған ЖИ агрегаторы',
+  'auth.subtitle': 'Құжаттар және заң нормаларымен жұмыс істеуге арналған заңгерлік ЖИ-көмекші',
   'auth.verifyTitle': 'Электрондық поштаңызды растаңыз',
   'auth.login': 'Кіру',
   'auth.register': 'Тіркелу',
@@ -406,10 +445,6 @@ const kz: Record<keyof typeof ru, string> = {
   'settings.clearChatsConfirm': 'Сенімдісіз бе? Барлық чаттар біржола жойылады.',
   'settings.clearChatsBtn': 'Барлық чаттарды жою',
   'settings.clearChatsDone': 'Барлық чаттар жойылды',
-  'settings.botStats': 'Бот статистикасы',
-  'settings.botsCount': 'Боттар',
-  'settings.usersReach': 'Пайдаланушылар',
-  'settings.promptsCount': 'Промпттар',
 
   'export.title': 'Құжатты экспорттау',
   'export.preview': 'Алдын ала қарау',
@@ -420,8 +455,18 @@ const kz: Record<keyof typeof ru, string> = {
   'export.cancel': 'Болдырмау',
   'export.creating': 'Жасалуда...',
   'export.downloadPdf': 'PDF жүктеу',
-  'export.downloadPptx': 'PPTX жүктеу',
+  'export.downloadDocx': 'DOCX жүктеу',
+  'export.quickLegalReport': 'Дайын заңгерлік есеп (2 баған)',
   'export.document': 'Құжат',
+  'export.lawyerMode': 'Заңгерге экспорт (екі баған)',
+  'export.lawyerColAnswer': 'Жауап',
+  'export.lawyerColSources': 'Дереккөздер және белгілер',
+  'export.lawyerSubtitle': 'Заңгерге экспорт',
+  'export.lawyerHint':
+    '«## Дереккөздер» немесе «---» кейінгі бөліммен бөліңіз.',
+
+  'citation.openOfficial': 'Ресми порталда ашу',
+  'citation.noFullText': 'Мақаланың толық мәтіні жауапқа қосылмаған.',
 
   'app.loadError': 'Чаттарды жүктеу мүмкін болмады. Қосылымды тексеріңіз.',
   'app.loadErrorShort': 'Чаттарды жүктеу мүмкін болмады.',
@@ -465,14 +510,6 @@ const kz: Record<keyof typeof ru, string> = {
   'bots.deleteError': 'Ботты жою мүмкін болмады',
   'bots.deleteConfirm': 'Осы ботты жоясыз ба?',
   'bots.modelLocked': 'Модель таңдалған бот арқылы басқарылады',
-
-  // Admin
-  'admin.title': 'Админ-панель',
-  'admin.totalBots': 'Всего ботов',
-  'admin.publicBots': 'Публичных ботов',
-  'admin.totalConversations': 'Всего диалогов',
-  'admin.totalMessages': 'Всего сообщений',
-  'admin.topBots': 'Топ ботов',
 
   'voice.title': 'Дауыстық чат',
   'voice.listening': 'Тыңдап жатырмын...',

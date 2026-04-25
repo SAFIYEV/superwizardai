@@ -1,7 +1,9 @@
 import type { FileAttachment } from './types'
 import { VISION_MODELS } from './types'
 
-const API_BASE = import.meta.env.VITE_API_URL || ''
+const API_BASE = import.meta.env.DEV
+  ? ''
+  : (import.meta.env.VITE_API_URL || '').trim()
 
 type ContentPart =
   | { type: 'text'; text: string }
@@ -75,7 +77,7 @@ export function buildApiMessages(
       }
       const noOcr = imageFiles.filter((f) => !f.ocrText)
       if (noOcr.length) {
-        textContent += `\n\n[Прикреплены изображения без текста: ${noOcr.map((f) => f.name).join(', ')}. Для анализа изображений используйте Llama 4 Scout 17B.]`
+        textContent += `\n\n[Прикреплены изображения без распознанного текста: ${noOcr.map((f) => f.name).join(', ')}.]`
       }
     }
 
@@ -93,7 +95,8 @@ export async function streamChat(
   onChunk: (text: string) => void,
   onDone: () => void,
   onError: (error: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { webSearch?: boolean }
 ): Promise<void> {
   try {
     const apiMessages = buildApiMessages(messages, model)
@@ -105,7 +108,8 @@ export async function streamChat(
         model,
         messages: apiMessages,
         temperature: 0.7,
-        max_tokens: 4096,
+        max_tokens: 8192,
+        use_google_search: Boolean(options?.webSearch),
       }),
       signal,
     })
@@ -151,6 +155,17 @@ export async function streamChat(
     onDone()
   } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') return
-    onError(err instanceof Error ? err.message : 'Network error')
+    const msg = err instanceof Error ? err.message : 'Network error'
+    if (msg === 'Failed to fetch' || /failed to fetch/i.test(msg)) {
+      onError(
+        [
+          'Запрос к API не выполнен (сеть или нет бэкенда).',
+          'Локально: запустите npm run dev и убедитесь, что в .env задан OPENROUTER_API_KEY.',
+          'Если открыта сборка на GitHub Pages и т.п., задайте VITE_API_URL на рабочий сервер с /api (см. .env.example).',
+        ].join(' ')
+      )
+      return
+    }
+    onError(msg)
   }
 }

@@ -47,14 +47,6 @@ export interface UserBot {
   updatedAt: string
 }
 
-export interface AdminSummary {
-  totalBots: number
-  publicBots: number
-  totalConversations: number
-  totalMessages: number
-  topBots: UserBot[]
-}
-
 export interface UserBotStats {
   botsCount: number
   usersReach: number
@@ -70,49 +62,17 @@ export interface ModelInfo {
   vision?: boolean
 }
 
+/** Единственная модель — Gemma 4 (через OpenRouter). */
+export const DEFAULT_MODEL_ID = 'google/gemma-4-26b-a4b-it:free'
+
 export const MODELS: ModelInfo[] = [
   {
-    id: 'openai/gpt-oss-120b',
-    name: 'GPT-OSS 120B',
-    provider: 'OpenAI',
-    speed: '~500 T/s',
-    context: '131K',
-  },
-  {
-    id: 'openai/gpt-oss-20b',
-    name: 'GPT-OSS 20B',
-    provider: 'OpenAI',
-    speed: '~1000 T/s',
-    context: '131K',
-  },
-  {
-    id: 'meta-llama/llama-4-scout-17b-16e-instruct',
-    name: 'Llama 4 Scout 17B',
-    provider: 'Meta',
-    speed: '~750 T/s',
-    context: '131K',
+    id: DEFAULT_MODEL_ID,
+    name: 'Gemma 4 26B A4B IT (Free)',
+    provider: 'OpenRouter',
+    speed: 'Legal',
+    context: '1M+',
     vision: true,
-  },
-  {
-    id: 'moonshotai/kimi-k2-instruct-0905',
-    name: 'Kimi K2',
-    provider: 'Moonshot AI',
-    speed: '~200 T/s',
-    context: '262K',
-  },
-  {
-    id: 'qwen/qwen3-32b',
-    name: 'Qwen3 32B',
-    provider: 'Alibaba',
-    speed: '~400 T/s',
-    context: '131K',
-  },
-  {
-    id: 'llama-3.1-8b-instant',
-    name: 'Llama 3.1 8B Instant',
-    provider: 'Meta',
-    speed: '~560 T/s',
-    context: '131K',
   },
 ]
 

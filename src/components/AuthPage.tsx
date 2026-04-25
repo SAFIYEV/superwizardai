@@ -7,7 +7,7 @@ import { LANGS, type Lang } from '../lib/i18n'
 type View = 'login' | 'register' | 'verify'
 
 export default function AuthPage() {
-  const { signUp, signIn, verifyOtp } = useAuth()
+  const { signUp, signIn, verifyOtp, authInitError } = useAuth()
   const { t, lang, setLang } = useLang()
 
   const [view, setView] = useState<View>('login')
@@ -87,8 +87,8 @@ export default function AuthPage() {
         </div>
 
         <div className="auth__brand">
-          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="AI Lumiere" className="auth__logo-img" />
-          <h1 className="auth__title">AI Lumiere</h1>
+          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="SuperWizard" className="auth__logo-img" />
+          <h1 className="auth__title">SuperWizard</h1>
           <p className="auth__subtitle">
             {view === 'verify' ? t('auth.verifyTitle') : t('auth.subtitle')}
           </p>
@@ -111,7 +111,9 @@ export default function AuthPage() {
           </div>
         )}
 
-        {error && <div className="auth__error">{error}</div>}
+        {(authInitError || error) && (
+          <div className="auth__error">{authInitError || error}</div>
+        )}
 
         <div ref={formRef} className="auth__form-wrapper" key={view}>
         {view === 'login' && (
@@ -207,7 +209,7 @@ export default function AuthPage() {
         )}
         </div>
 
-        <div className="auth__footer">AI Lumiere © 2026</div>
+        <div className="auth__footer">SuperWizard © 2026</div>
       </div>
     </div>
   )

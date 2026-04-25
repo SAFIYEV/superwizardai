@@ -3,13 +3,19 @@ import { MessageSquareOff } from 'lucide-react'
 import type { Conversation } from '../types'
 import Message from './Message'
 import { useLang } from '../contexts/LangContext'
+import { getStreamError } from '../lib/streamError'
 
 interface Props {
   conversation: Conversation
   isStreaming: boolean
+  onRetryStream?: (assistantMsgId: string) => void
 }
 
-export default function Chat({ conversation, isStreaming }: Props) {
+export default function Chat({
+  conversation,
+  isStreaming,
+  onRetryStream,
+}: Props) {
   const { t } = useLang()
   const containerRef = useRef<HTMLDivElement>(null)
   const isNearBottomRef = useRef(true)
@@ -52,7 +58,20 @@ export default function Chat({ conversation, isStreaming }: Props) {
         {conversation.messages.map((msg, i) => {
           const isLast = i === conversation.messages.length - 1
           const showStreaming = isStreaming && isLast && msg.role === 'assistant'
-          return <Message key={msg.id} message={msg} isStreaming={showStreaming} />
+          const onRetry =
+            onRetryStream &&
+            msg.role === 'assistant' &&
+            getStreamError(msg.content)
+              ? () => onRetryStream(msg.id)
+              : undefined
+          return (
+            <Message
+              key={msg.id}
+              message={msg}
+              isStreaming={showStreaming}
+              onRetry={onRetry}
+            />
+          )
         })}
       </div>
     </div>

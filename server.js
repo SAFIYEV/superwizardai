@@ -5,15 +5,29 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import path from 'path';
-
-dotenv.config();
+import {
+  CHAT_MODEL_ID,
+  ALLOWED_MODELS,
+  GEMINI_API_BASE,
+  buildGeminiGenerateBody,
+  geminiResponseToOpenAIChat,
+  geminiFetchWithRetry,
+  geminiRequestHeaders,
+  pipeGeminiSseToOpenAI,
+  staticModelsOpenAIFormat,
+} from './lib/geminiChat.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // ─── Startup checks ───
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-if (!GROQ_API_KEY) {
-  console.error('[AI Lumiere] GROQ_API_KEY is not set in .env — server cannot start.');
+const GEMINI_API_KEY = (
+  process.env.OPENROUTER_API_KEY ??
+  process.env.GEMINI_API_KEY ??
+  ''
+).trim();
+if (!GEMINI_API_KEY) {
+  console.error('[SuperWizard] OPENROUTER_API_KEY is not set in .env — server cannot start.');
   process.exit(1);
 }
 
@@ -95,15 +109,6 @@ function requestTimeout(ms) {
 }
 
 // ─── Input validation ───
-const ALLOWED_MODELS = new Set([
-  'openai/gpt-oss-120b',
-  'openai/gpt-oss-20b',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'moonshotai/kimi-k2-instruct-0905',
-  'qwen/qwen3-32b',
-  'llama-3.1-8b-instant',
-]);
-
 const MAX_MESSAGE_LENGTH = 32000;
 const MAX_MESSAGES = 100;
 
@@ -111,6 +116,11 @@ function validateChatBody(body) {
   if (!body || typeof body !== 'object') return 'Invalid request body';
   if (!body.model || !ALLOWED_MODELS.has(body.model))
     return `Неизвестная модель: ${body.model}`;
+  if (
+    body.use_google_search !== undefined &&
+    typeof body.use_google_search !== 'boolean'
+  )
+    return 'use_google_search must be boolean';
   if (!Array.isArray(body.messages) || body.messages.length === 0)
     return 'Messages array is required';
   if (body.messages.length > MAX_MESSAGES)
@@ -143,6 +153,7 @@ function validateChatBody(body) {
 function sanitizeParams(body) {
   return {
     model: body.model,
+    use_google_search: Boolean(body.use_google_search),
     messages: body.messages.map((m) => {
       if (Array.isArray(m.content)) {
         return {
@@ -160,40 +171,6 @@ function sanitizeParams(body) {
   };
 }
 
-// ─── Groq API proxy ───
-const GROQ_BASE = 'https://api.groq.com/openai/v1';
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function groqFetch(endpoint, options, maxRetries = 5) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(`${GROQ_BASE}${endpoint}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-    if (res.ok) return res;
-    if (res.status === 429) {
-      const retryAfter = res.headers.get('retry-after');
-      const wait = retryAfter
-        ? parseInt(retryAfter, 10) * 1000
-        : Math.min(1000 * 2 ** attempt + Math.random() * 500, 32000);
-      console.log(
-        `[AI Lumiere] Rate limited – waiting ${Math.round(wait)}ms (attempt ${attempt + 1}/${maxRetries})`
-      );
-      await sleep(wait);
-      continue;
-    }
-    return res;
-  }
-  return new Response(
-    JSON.stringify({ error: { message: 'Rate limit exceeded after max retries' } }),
-    { status: 429, headers: { 'Content-Type': 'application/json' } }
-  );
-}
-
 // ─── Routes ───
 
 app.post('/api/chat', requestTimeout(120000), async (req, res) => {
@@ -201,14 +178,21 @@ app.post('/api/chat', requestTimeout(120000), async (req, res) => {
   if (err) return res.status(400).json({ error: { message: err } });
 
   try {
-    const response = await groqFetch('/chat/completions', {
+    const genBody = buildGeminiGenerateBody(sanitizeParams(req.body));
+    const url = `${GEMINI_API_BASE}/chat/completions`;
+    const response = await geminiFetchWithRetry(url, {
       method: 'POST',
-      body: JSON.stringify(sanitizeParams(req.body)),
+      headers: geminiRequestHeaders(GEMINI_API_KEY),
+      body: JSON.stringify(genBody),
     });
     const data = await response.json();
-    res.status(response.status).json(data);
+    if (!response.ok) {
+      const msg = data?.error?.message || 'Gemini request failed';
+      return res.status(response.status).json({ error: { message: msg } });
+    }
+    res.json(geminiResponseToOpenAIChat(data, CHAT_MODEL_ID));
   } catch (e) {
-    console.error('[AI Lumiere] Chat error:', e);
+    console.error('[SuperWizard] Chat error:', e);
     res.status(500).json({ error: { message: 'Internal server error' } });
   }
 });
@@ -218,87 +202,36 @@ app.post('/api/chat/stream', async (req, res) => {
   if (err) return res.status(400).json({ error: { message: err } });
 
   try {
-    const response = await groqFetch('/chat/completions', {
+    const genBody = buildGeminiGenerateBody(sanitizeParams(req.body));
+    genBody.stream = true;
+    const url = `${GEMINI_API_BASE}/chat/completions`;
+    const response = await geminiFetchWithRetry(url, {
       method: 'POST',
-      body: JSON.stringify({ ...sanitizeParams(req.body), stream: true }),
+      headers: geminiRequestHeaders(GEMINI_API_KEY),
+      body: JSON.stringify(genBody),
     });
 
     if (!response.ok) {
       const data = await response.json();
-      return res.status(response.status).json(data);
+      const msg = data?.error?.message || 'Gemini stream failed';
+      return res.status(response.status).json({ error: { message: msg } });
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    const pump = async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(decoder.decode(value, { stream: true }));
-        }
-      } catch (e) {
-        console.error('[AI Lumiere] Stream read error:', e);
-      } finally {
-        res.end();
-      }
-    };
-
-    req.on('close', () => reader.cancel().catch(() => {}));
-    pump();
+    await pipeGeminiSseToOpenAI(res, response.body, req);
   } catch (e) {
-    console.error('[AI Lumiere] Stream error:', e);
-    res.status(500).json({ error: { message: 'Internal server error' } });
-  }
-});
-
-app.post('/api/audio/transcribe', requestTimeout(30000), async (req, res) => {
-  const { audio, mimeType, language } = req.body || {};
-  if (!audio || typeof audio !== 'string') {
-    return res.status(400).json({ error: { message: 'Audio data required' } });
-  }
-
-  try {
-    const audioBuffer = Buffer.from(audio, 'base64');
-    const ext = (mimeType || '').includes('ogg') ? 'ogg' : (mimeType || '').includes('mp4') ? 'mp4' : 'webm';
-
-    const formData = new FormData();
-    formData.append('file', new Blob([audioBuffer], { type: mimeType || 'audio/webm' }), `audio.${ext}`);
-    formData.append('model', 'whisper-large-v3-turbo');
-    if (language) formData.append('language', language);
-
-    const response = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const data = await response.json();
-      return res.status(response.status).json(data);
+    console.error('[SuperWizard] Stream error:', e);
+    if (!res.headersSent) {
+      res.status(500).json({ error: { message: 'Internal server error' } });
     }
-
-    const data = await response.json();
-    res.json(data);
-  } catch (e) {
-    console.error('[AI Lumiere] Transcribe error:', e);
-    res.status(500).json({ error: { message: 'Transcription failed' } });
   }
 });
 
 app.get('/api/models', requestTimeout(10000), async (_req, res) => {
-  try {
-    const response = await groqFetch('/models', { method: 'GET' });
-    const data = await response.json();
-    res.status(response.status).json(data);
-  } catch (e) {
-    res.status(500).json({ error: { message: 'Internal server error' } });
-  }
+  res.json(staticModelsOpenAIFormat());
 });
 
 // ─── Serve built frontend (production) ───
@@ -310,5 +243,5 @@ app.get('*', (_req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`[AI Lumiere] Running → http://localhost:${PORT}`);
+  console.log(`[SuperWizard] Running → http://localhost:${PORT}`);
 });
