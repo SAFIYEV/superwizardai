@@ -62,14 +62,14 @@ export interface ModelInfo {
   vision?: boolean
 }
 
-/** Единственная модель — Gemma 4 (через OpenRouter). */
-export const DEFAULT_MODEL_ID = 'google/gemma-4-26b-a4b-it:free'
+/** Единственная модель — GLM 4.7 (через NVIDIA NIM). */
+export const DEFAULT_MODEL_ID = 'z-ai/glm4.7'
 
 export const MODELS: ModelInfo[] = [
   {
     id: DEFAULT_MODEL_ID,
-    name: 'Gemma 4 26B A4B IT (Free)',
-    provider: 'OpenRouter',
+    name: 'GLM 4.7',
+    provider: 'NVIDIA NIM',
     speed: 'Legal',
     context: '1M+',
     vision: true,

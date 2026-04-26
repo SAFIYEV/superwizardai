@@ -459,8 +459,8 @@ function ChatApp() {
             jurisdiction={jurisdiction}
             onJurisdictionChange={setJurisdiction}
           />
-          <span className="model-badge" title="Gemma 4 26B A4B IT (OpenRouter)">
-            Gemma 4
+          <span className="model-badge" title="GLM 4.7 (NVIDIA NIM)">
+            GLM 4.7
           </span>
           <div className="main__header-right">
             <button

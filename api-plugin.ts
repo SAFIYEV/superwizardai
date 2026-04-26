@@ -136,6 +136,8 @@ export function apiPlugin(): Plugin {
   const refreshGeminiApiKey = () => {
     const fromFiles = loadEnv(envMode, envDir, '')
       geminiApiKey = (
+        fromFiles.NVIDIA_API_KEY ||
+        process.env.NVIDIA_API_KEY ||
         fromFiles.OPENROUTER_API_KEY ||
         process.env.OPENROUTER_API_KEY ||
         fromFiles.GEMINI_API_KEY ||
@@ -143,7 +145,7 @@ export function apiPlugin(): Plugin {
         ''
       ).trim()
     if (geminiApiKey) {
-        process.env.OPENROUTER_API_KEY = geminiApiKey
+        process.env.NVIDIA_API_KEY = geminiApiKey
     }
     return geminiApiKey
   }
@@ -158,7 +160,7 @@ export function apiPlugin(): Plugin {
     configureServer(server) {
       if (!geminiApiKey) {
         console.warn(
-          '[SuperWizard] OPENROUTER_API_KEY пустой — добавьте OPENROUTER_API_KEY в .env рядом с vite.config.ts и перезапустите npm run dev.'
+          '[SuperWizard] NVIDIA_API_KEY пустой — добавьте NVIDIA_API_KEY в .env рядом с vite.config.ts и перезапустите npm run dev.'
         )
       }
 
@@ -192,7 +194,7 @@ export function apiPlugin(): Plugin {
             return sendJson(res as ServerResponse, 500, {
               error: {
                 message:
-                  'Сервер: не задан OPENROUTER_API_KEY в .env (рядом с vite.config.ts). Перезапустите npm run dev.',
+                  'Сервер: не задан NVIDIA_API_KEY в .env (рядом с vite.config.ts). Перезапустите npm run dev.',
               },
             })
           }
@@ -244,7 +246,7 @@ export function apiPlugin(): Plugin {
             return sendJson(res as ServerResponse, 500, {
               error: {
                 message:
-                  'Сервер: не задан OPENROUTER_API_KEY в .env (рядом с vite.config.ts). Перезапустите npm run dev.',
+                  'Сервер: не задан NVIDIA_API_KEY в .env (рядом с vite.config.ts). Перезапустите npm run dev.',
               },
             })
           }

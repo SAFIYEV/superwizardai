@@ -3,5 +3,5 @@ main = "worker.js"
 compatibility_date = "2024-12-01"
 
 # After first deploy, run:
-# npx wrangler secret put OPENROUTER_API_KEY
-# Then paste your OpenRouter API key — it will be stored encrypted in Cloudflare
+# npx wrangler secret put NVIDIA_API_KEY
+# Then paste your NVIDIA API key — it will be stored encrypted in Cloudflare

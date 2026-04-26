@@ -31,7 +31,8 @@ export function openAiSseStreamFromGemini(
 export function geminiFetchWithRetry(
   url: string,
   init: RequestInit,
-  maxRetries?: number
+  maxRetries?: number,
+  timeoutMs?: number
 ): Promise<Response>;
 
 export function transcribeWithGemini(

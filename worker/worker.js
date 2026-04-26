@@ -135,7 +135,7 @@ export default {
       return json({ error: { message: 'Origin not allowed' } }, 403, '');
     }
 
-    const apiKey = (env.OPENROUTER_API_KEY ?? env.GEMINI_API_KEY ?? '').trim();
+    const apiKey = (env.NVIDIA_API_KEY ?? env.OPENROUTER_API_KEY ?? env.GEMINI_API_KEY ?? '').trim();
     if (!apiKey) {
       return json({ error: { message: 'Server misconfigured' } }, 500, origin);
     }

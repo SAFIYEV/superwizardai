@@ -160,7 +160,7 @@ export async function streamChat(
       onError(
         [
           'Запрос к API не выполнен (сеть или нет бэкенда).',
-          'Локально: запустите npm run dev и убедитесь, что в .env задан OPENROUTER_API_KEY.',
+          'Локально: запустите npm run dev и убедитесь, что в .env задан NVIDIA_API_KEY.',
           'Если открыта сборка на GitHub Pages и т.п., задайте VITE_API_URL на рабочий сервер с /api (см. .env.example).',
         ].join(' ')
       )

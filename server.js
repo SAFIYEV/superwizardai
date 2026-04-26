@@ -22,12 +22,13 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 // ─── Startup checks ───
 const GEMINI_API_KEY = (
+  process.env.NVIDIA_API_KEY ??
   process.env.OPENROUTER_API_KEY ??
   process.env.GEMINI_API_KEY ??
   ''
 ).trim();
 if (!GEMINI_API_KEY) {
-  console.error('[SuperWizard] OPENROUTER_API_KEY is not set in .env — server cannot start.');
+  console.error('[SuperWizard] NVIDIA_API_KEY is not set in .env — server cannot start.');
   process.exit(1);
 }
 
