@@ -135,6 +135,22 @@ export default {
       return json({ error: { message: 'Origin not allowed' } }, 403, '');
     }
 
+    if (
+      (url.pathname === '/' || url.pathname === '/api') &&
+      request.method === 'GET'
+    ) {
+      return json(
+        {
+          ok: true,
+          service: 'superwizard-api',
+          hint: 'This is the API host. Open the frontend (GitHub Pages) or call POST /api/chat.',
+          endpoints: ['/api/models', '/api/chat', '/api/chat/stream'],
+        },
+        200,
+        origin
+      );
+    }
+
     const apiKey = (env.NVIDIA_API_KEY ?? env.OPENROUTER_API_KEY ?? env.GEMINI_API_KEY ?? '').trim();
     if (!apiKey) {
       return json({ error: { message: 'Server misconfigured' } }, 500, origin);
