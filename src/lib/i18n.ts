@@ -28,7 +28,7 @@ const ru = {
   'legal.jurisdiction': 'Юрисдикция',
   'legal.webSearch': 'Веб-анализ',
   'legal.webSearchHint':
-    'Включить поиск в интернете для актуальных текстов законов и официальных источников (Google Search)',
+    'Сервер подгрузит фрагмент страницы официального портала выбранной юрисдикции (не полный кодекс) — для опоры в ответе; сверка по ссылке обязательна',
 
   // Welcome
   'welcome.subtitle':
@@ -209,7 +209,7 @@ const en: Record<keyof typeof ru, string> = {
   'legal.jurisdiction': 'Jurisdiction',
   'legal.webSearch': 'Web analysis',
   'legal.webSearchHint':
-    'Search the web for up-to-date statutes and official sources (Google Search)',
+    'Server fetches a snippet from the official portal for the selected jurisdiction (not full codes); use for grounding—verify via the URL',
 
   'welcome.subtitle':
     'Legal AI agent: document analysis and law across selected countries. Not a substitute for a lawyer.',
@@ -378,7 +378,7 @@ const kz: Record<keyof typeof ru, string> = {
   'legal.jurisdiction': 'Юрисдикция',
   'legal.webSearch': 'Веб-талдау',
   'legal.webSearchHint':
-    'Заңдардың өзекті мәтіндері мен ресми дереккөздерді интернеттен іздеу (Google Search)',
+    'Сервер таңдалған юрисдикцияның ресми порталының үзіндісін жүктейді (толық кодекс емес); жауапқа сүйену үшін, сілтеме бойынша тексеру қажет',
 
   'welcome.subtitle':
     'Заңгерлік ЖИ: құжаттар мен таңдалған елдердің нормаларын талдау. Адвокаттың орнын баспайды.',

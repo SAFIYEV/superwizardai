@@ -185,7 +185,7 @@ function ChatApp() {
           )
         },
         ctrl.signal,
-        { webSearch: webSearchRef.current }
+        { webSearch: webSearchRef.current, jurisdiction: jurisdictionRef.current }
       )
     },
     [flushStreamContent]

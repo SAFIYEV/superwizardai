@@ -96,7 +96,7 @@ export async function streamChat(
   onDone: () => void,
   onError: (error: string) => void,
   signal?: AbortSignal,
-  options?: { webSearch?: boolean }
+  options?: { webSearch?: boolean; jurisdiction?: string }
 ): Promise<void> {
   try {
     const apiMessages = buildApiMessages(messages, model)
@@ -110,6 +110,7 @@ export async function streamChat(
         temperature: 0.7,
         max_tokens: 8192,
         use_google_search: Boolean(options?.webSearch),
+        jurisdiction: (options?.jurisdiction ?? '').trim(),
       }),
       signal,
     })

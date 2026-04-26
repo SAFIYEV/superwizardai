@@ -16,6 +16,7 @@ import {
   pipeGeminiSseToOpenAI,
   staticModelsOpenAIFormat,
 } from './lib/geminiChat.js';
+import { maybeAugmentWithOfficialPortal, normalizeJurisdiction } from './lib/legalSourceFetch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -122,6 +123,8 @@ function validateChatBody(body) {
     typeof body.use_google_search !== 'boolean'
   )
     return 'use_google_search must be boolean';
+  if (body.jurisdiction !== undefined && body.jurisdiction !== null && typeof body.jurisdiction !== 'string')
+    return 'jurisdiction must be string';
   if (!Array.isArray(body.messages) || body.messages.length === 0)
     return 'Messages array is required';
   if (body.messages.length > MAX_MESSAGES)
@@ -155,6 +158,7 @@ function sanitizeParams(body) {
   return {
     model: body.model,
     use_google_search: Boolean(body.use_google_search),
+    jurisdiction: normalizeJurisdiction(typeof body.jurisdiction === 'string' ? body.jurisdiction : ''),
     messages: body.messages.map((m) => {
       if (Array.isArray(m.content)) {
         return {
@@ -179,7 +183,9 @@ app.post('/api/chat', requestTimeout(120000), async (req, res) => {
   if (err) return res.status(400).json({ error: { message: err } });
 
   try {
-    const genBody = buildGeminiGenerateBody(sanitizeParams(req.body));
+    const base = sanitizeParams(req.body);
+    const augmented = await maybeAugmentWithOfficialPortal(base, fetch);
+    const genBody = buildGeminiGenerateBody(augmented);
     const url = `${GEMINI_API_BASE}/chat/completions`;
     const response = await geminiFetchWithRetry(url, {
       method: 'POST',
@@ -203,7 +209,9 @@ app.post('/api/chat/stream', async (req, res) => {
   if (err) return res.status(400).json({ error: { message: err } });
 
   try {
-    const genBody = buildGeminiGenerateBody(sanitizeParams(req.body));
+    const base = sanitizeParams(req.body);
+    const augmented = await maybeAugmentWithOfficialPortal(base, fetch);
+    const genBody = buildGeminiGenerateBody(augmented);
     genBody.stream = true;
     const url = `${GEMINI_API_BASE}/chat/completions`;
     const response = await geminiFetchWithRetry(url, {

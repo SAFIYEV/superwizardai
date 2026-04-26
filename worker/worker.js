@@ -9,6 +9,7 @@ import {
   openAiSseStreamFromGemini,
   staticModelsOpenAIFormat,
 } from '../lib/geminiChat.js';
+import { maybeAugmentWithOfficialPortal, normalizeJurisdiction } from '../lib/legalSourceFetch.js';
 
 const MAX_MSG_LEN = 32000;
 const MAX_MSGS = 100;
@@ -74,6 +75,8 @@ function validateBody(body) {
     typeof body.use_google_search !== 'boolean'
   )
     return 'Invalid use_google_search';
+  if (body.jurisdiction !== undefined && body.jurisdiction !== null && typeof body.jurisdiction !== 'string')
+    return 'Invalid jurisdiction';
   if (!Array.isArray(body.messages) || !body.messages.length) return 'No messages';
   if (body.messages.length > MAX_MSGS) return 'Too many messages';
   for (const m of body.messages) {
@@ -101,6 +104,7 @@ function sanitize(body) {
   return {
     model: body.model,
     use_google_search: Boolean(body.use_google_search),
+    jurisdiction: normalizeJurisdiction(typeof body.jurisdiction === 'string' ? body.jurisdiction : ''),
     messages: body.messages.map((m) => {
       if (Array.isArray(m.content)) {
         return {
@@ -161,7 +165,9 @@ export default {
       const err = validateBody(body);
       if (err) return json({ error: { message: err } }, 400, origin);
 
-      const genBody = buildGeminiGenerateBody(sanitize(body));
+      const base = sanitize(body);
+      const augmented = await maybeAugmentWithOfficialPortal(base, fetch);
+      const genBody = buildGeminiGenerateBody(augmented);
       genBody.stream = true;
       const streamUrl = `${GEMINI_API_BASE}/chat/completions`;
       const geminiRes = await geminiFetchWithRetry(streamUrl, {
@@ -191,7 +197,9 @@ export default {
       const err = validateBody(body);
       if (err) return json({ error: { message: err } }, 400, origin);
 
-      const genBody = buildGeminiGenerateBody(sanitize(body));
+      const base = sanitize(body);
+      const augmented = await maybeAugmentWithOfficialPortal(base, fetch);
+      const genBody = buildGeminiGenerateBody(augmented);
       const urlGen = `${GEMINI_API_BASE}/chat/completions`;
       const geminiRes = await geminiFetchWithRetry(urlGen, {
         method: 'POST',
