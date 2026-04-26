@@ -459,9 +459,6 @@ function ChatApp() {
             jurisdiction={jurisdiction}
             onJurisdictionChange={setJurisdiction}
           />
-          <span className="model-badge" title="GLM 4.7 (NVIDIA NIM)">
-            GLM 4.7
-          </span>
           <div className="main__header-right">
             <button
               type="button"
